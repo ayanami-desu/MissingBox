@@ -23,36 +23,32 @@ enum ConfigOverrideError: LocalizedError {
 }
 
 /// 用户自定义的覆写：配置覆写只对单个配置生效，全局覆写对所有配置生效；
-/// 生成最终配置时先合并配置覆写，再合并全局覆写
+/// 生成最终配置时先合并配置覆写，再合并全局覆写；mihomo 与 sing-box 各自独立存放
 nonisolated enum ConfigOverride: Codable, Hashable {
-    case global
-    /// 以配置名称区分
-    case profile(String)
+    case global(CoreType)
+    /// 以内核类型和配置名称区分
+    case profile(CoreType, String)
 
-    private static var rootURL: URL {
-        URL.applicationSupportDirectory
-            .appending(path: Bundle.main.bundleIdentifier ?? "ClashLite", directoryHint: .isDirectory)
-    }
-
-    /// 配置覆写所在目录，文件以配置名称命名
-    private static var profileDirectoryURL: URL {
-        rootURL.appending(path: "Overrides", directoryHint: .isDirectory)
+    var coreType: CoreType {
+        switch self {
+        case .global(let coreType), .profile(let coreType, _): coreType
+        }
     }
 
     /// 都放在配置目录之外，不会被当成配置
     var url: URL {
         switch self {
-        case .global:
-            Self.rootURL.appending(path: "Override.yaml", directoryHint: .notDirectory)
-        case .profile(let name):
-            Self.profileDirectoryURL.appending(path: "\(name).yaml", directoryHint: .notDirectory)
+        case .global(let coreType):
+            coreType.globalOverrideURL
+        case .profile(let coreType, let name):
+            coreType.overridesURL.appending(path: "\(name).\(coreType.defaultProfileExtension)", directoryHint: .notDirectory)
         }
     }
 
     var title: String {
         switch self {
         case .global: String(localized: "Global Override")
-        case .profile(let name): String(localized: "Profile Override - \(name)")
+        case .profile(_, let name): String(localized: "Profile Override - \(name)")
         }
     }
 
@@ -60,9 +56,14 @@ nonisolated enum ConfigOverride: Codable, Hashable {
         (try? String(contentsOf: url, encoding: .utf8)) ?? ""
     }
 
-    /// 检查 YAML 格式后保存，内容无效时不写入
+    /// 检查对应格式（mihomo 为 YAML 映射，sing-box 为 JSON 对象）后保存，内容无效时不写入
     func save(_ text: String) throws {
-        _ = try Self.parse(text)
+        switch coreType {
+        case .mihomo:
+            _ = try Self.parse(text)
+        case .singBox:
+            _ = try SingBoxJSON.parseObject(text, allowEmpty: true)
+        }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try text.write(to: url, atomically: true, encoding: .utf8)
@@ -72,23 +73,28 @@ nonisolated enum ConfigOverride: Codable, Hashable {
         }
     }
 
-    /// 合并到配置中
+    /// 合并到 mihomo YAML 配置中
     func apply(to root: inout Node.Mapping) throws {
         Self.merge(try Self.parse(load()), into: &root)
     }
 
+    /// 合并到 sing-box JSON 配置中
+    func apply(to root: inout [String: Any]) throws {
+        SingBoxJSON.merge(try SingBoxJSON.parseObject(load(), allowEmpty: true), into: &root)
+    }
+
     /// 配置重命名时随之移动配置覆写；目标位置残留的旧覆写会被替换
-    static func renameProfileOverride(from oldName: String, to newName: String) {
-        let source = profile(oldName).url
-        let destination = profile(newName).url
+    static func renameProfileOverride(for coreType: CoreType, from oldName: String, to newName: String) {
+        let source = profile(coreType, oldName).url
+        let destination = profile(coreType, newName).url
         guard FileManager.default.fileExists(atPath: source.path) else { return }
         _ = FileManager.moveItemAllowingCaseChange(at: source, to: destination)
     }
 
     /// 删除配置已不存在的配置覆写，避免之后同名的配置沿用未经校验的覆写
-    static func removeProfileOverrides(except names: Set<String>) {
+    static func removeProfileOverrides(for coreType: CoreType, except names: Set<String>) {
         let files = (try? FileManager.default.contentsOfDirectory(
-            at: profileDirectoryURL,
+            at: coreType.overridesURL,
             includingPropertiesForKeys: nil,
             options: .skipsHiddenFiles
         )) ?? []
@@ -153,8 +159,14 @@ struct ConfigOverrideView: View {
 
     private var hint: LocalizedStringKey {
         switch target {
-        case .global: "Applies to all profiles, merged after the profile override. For lists, use +key to prepend and key+ to append."
-        case .profile: "Applies only to this profile, merged before the global override. For lists, use +key to prepend and key+ to append."
+        case .global(.mihomo):
+            "Applies to all profiles, merged after the profile override. For lists, use +key to prepend and key+ to append."
+        case .profile(.mihomo, _):
+            "Applies only to this profile, merged before the global override. For lists, use +key to prepend and key+ to append."
+        case .global(.singBox):
+            "JSON object applied to all sing-box profiles after the profile override. For arrays, use +key to prepend and key+ to append."
+        case .profile(.singBox, _):
+            "JSON object applied only to this sing-box profile before the global override. For arrays, use +key to prepend and key+ to append."
         }
     }
 
@@ -163,18 +175,22 @@ struct ConfigOverrideView: View {
             .navigationTitle(target.title)
     }
 
-    /// 全局覆写只检查 YAML 格式；配置覆写由内核校验合并后的配置
+    /// 全局覆写只检查格式；配置覆写由内核校验合并后的配置
     private func save() async throws {
         switch target {
-        case .global:
-            try ConfigOverride.global.save(text)
-            core.reload()
-        case .profile(let name):
-            guard let profile = profileStore.profiles.first(where: { $0.name == name && !$0.isDeleted }) else {
+        case .global(let coreType):
+            try target.save(text)
+            if core.activeCore == coreType {
+                core.reload()
+            }
+        case .profile(let coreType, let name):
+            guard profileStore.coreType == coreType,
+                  let profile = profileStore.profiles.first(where: { $0.name == name && !$0.isDeleted })
+            else {
                 throw ProfileError.notFound(name)
             }
             try await profileStore.saveOverride(text, of: profile)
-            if profileStore.selectedName == name {
+            if core.activeCore == coreType, profileStore.selectedName == name {
                 core.reload()
             }
         }

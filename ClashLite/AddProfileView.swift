@@ -120,7 +120,10 @@ struct AddProfileView: View {
         .onChange(of: source) {
             errorMessage = nil
         }
-        .fileImporter(isPresented: $isImporterPresented, allowedContentTypes: [.yaml]) { result in
+        .fileImporter(
+            isPresented: $isImporterPresented,
+            allowedContentTypes: profileStore.coreType == .mihomo ? [.yaml] : [.json]
+        ) { result in
             switch result {
             case .success(let url):
                 fileURL = url

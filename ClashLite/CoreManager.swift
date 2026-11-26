@@ -8,7 +8,7 @@
 import AppKit
 import Observation
 
-/// 管理内核进程：以覆写后的配置（base64）启动 mihomo，设置变化时通过 RESTful API 同步
+/// 管理内核进程：支持在 mihomo 与 sing-box 之间切换，设置变化时通过 RESTful API 或重启同步
 @Observable
 final class CoreManager {
     enum Status {
@@ -26,6 +26,9 @@ final class CoreManager {
             }
         }
     }
+
+    /// 当前启用的内核类型，通过 switchCore(to:) 切换
+    private(set) var activeCore: CoreType
 
     private(set) var status: Status = .stopped {
         didSet {
@@ -56,10 +59,29 @@ final class CoreManager {
         }
     }
 
-    /// 是否把系统代理指向内核，通过 setSystemProxyEnabled(_:) 修改
+    /// 是否把系统代理指向内核，通过 setSystemProxyEnabled(_:) 修改，未配置可用代理端口时会被关闭
     private(set) var isSystemProxyEnabled: Bool {
         didSet {
             UserDefaults.standard.set(isSystemProxyEnabled, forKey: Self.systemProxyKey)
+        }
+    }
+
+    /// 应用内 IPv6 控制模式（自动 / 开启 / 关闭），通过 setIPv6Mode(_:) 修改
+    private(set) var ipv6Mode: IPv6Mode {
+        didSet {
+            UserDefaults.standard.set(ipv6Mode.rawValue, forKey: Self.ipv6ModeKey)
+        }
+    }
+
+    /// 物理主网络接口当前是否具备公网 IPv6
+    private(set) var isSystemIPv6Available = false
+
+    /// 最终下发给内核的 IPv6 开关状态
+    var isIPv6Enabled: Bool {
+        switch ipv6Mode {
+        case .auto: isSystemIPv6Available
+        case .enabled: true
+        case .disabled: false
         }
     }
 
@@ -74,11 +96,14 @@ final class CoreManager {
     /// 正在更新面板
     private(set) var isUpdatingPanel = false
 
-    /// 内核托管的面板，子目录取自当前生效的配置
-    private var panelURL: URL { controller.panelURL(uiName: uiName) }
+    /// 内核托管的面板地址
+    private var panelURL: URL { controller.panelURL(for: activeCore, uiName: uiName) }
 
     private var uiName: String?
+    private var dashboardDownloadURL: String?
 
+    @ObservationIgnored private weak var profileStore: ProfileStore?
+    @ObservationIgnored private weak var wiFiAutoSwitch: WiFiAutoSwitch?
     @ObservationIgnored private var proxies: [String: CoreController.Proxy] = [:] {
         didSet { updateProxyGroups() }
     }
@@ -87,34 +112,48 @@ final class CoreManager {
     @ObservationIgnored private var process: Process?
     @ObservationIgnored private var operation: Task<Void, Never>?
     @ObservationIgnored private var isApplyScheduled = false
+    @ObservationIgnored private var isSwitchingCore = false
     @ObservationIgnored private var syncTask: Task<Void, Never>?
     @ObservationIgnored private var isSyncing = false
     @ObservationIgnored private var dnsMonitor: SystemDNSMonitor?
     /// 内核最近一次加载配置时的系统 DNS 服务器
     @ObservationIgnored private var loadedDNSServers: [String] = []
     @ObservationIgnored private var dnsChangeTask: Task<Void, Never>?
-    /// 内核报告的代理端口，混合端口同时服务 HTTP 和 SOCKS
+    @ObservationIgnored private var ipv6Monitor: SystemIPv6Monitor?
+    @ObservationIgnored private var ipv6ChangeTask: Task<Void, Never>?
+    /// 内核监听的代理端口，混合端口同时服务 HTTP 和 SOCKS
     @ObservationIgnored private var proxyPorts: ProxyPorts?
     /// 已写入系统代理的端口，端口不变时不再重复设置
     @ObservationIgnored private var appliedProxyPorts: ProxyPorts?
     @ObservationIgnored private static let syncInterval = Duration.seconds(3)
+    @ObservationIgnored private static let coreTypeKey = "activeCoreType"
     @ObservationIgnored private static let modeKey = "proxyMode"
     @ObservationIgnored private static let tunKey = "tunEnabled"
     @ObservationIgnored private static let systemProxyKey = "systemProxyEnabled"
-
-    private struct ProxyPorts: Equatable {
-        var http: Int?
-        var socks: Int?
-    }
+    @ObservationIgnored private static let ipv6ModeKey = "ipv6Mode"
 
     private var config: CoreConfig {
-        CoreConfig(mode: mode, isTunEnabled: isTunEnabled, controller: controller)
+        CoreConfig(
+            coreType: activeCore,
+            mode: mode,
+            isTunEnabled: isTunEnabled,
+            isIPv6Enabled: isIPv6Enabled,
+            controller: controller
+        )
     }
 
-    init(profileStore: ProfileStore) {
+    static func loadStoredCoreType() -> CoreType {
+        UserDefaults.standard.string(forKey: coreTypeKey).flatMap(CoreType.init) ?? .mihomo
+    }
+
+    init(profileStore: ProfileStore, wiFiAutoSwitch: WiFiAutoSwitch? = nil) {
+        self.profileStore = profileStore
+        self.wiFiAutoSwitch = wiFiAutoSwitch
+        activeCore = profileStore.coreType
         mode = UserDefaults.standard.string(forKey: Self.modeKey).flatMap(ProxyMode.init) ?? .rule
         isTunEnabled = UserDefaults.standard.bool(forKey: Self.tunKey)
         isSystemProxyEnabled = UserDefaults.standard.bool(forKey: Self.systemProxyKey)
+        ipv6Mode = UserDefaults.standard.string(forKey: Self.ipv6ModeKey).flatMap(IPv6Mode.init) ?? .auto
 
         Notifier.setUp()
 
@@ -134,12 +173,43 @@ final class CoreManager {
             self?.systemDNSDidChange()
         }
 
+        let ipv6Monitor = SystemIPv6Monitor { [weak self] in
+            self?.systemIPv6DidChange()
+        }
+        self.ipv6Monitor = ipv6Monitor
+        isSystemIPv6Available = ipv6Monitor.isAvailable
+
         // 上次异常退出可能遗留了未恢复的系统代理
         if !isSystemProxyEnabled, SystemProxy.hasBackup {
             enqueue { await self.restoreSystemProxy() }
         }
 
         observeSelection(of: profileStore)
+    }
+
+    /// 切换内核：先停止当前内核并恢复系统代理，再切换配置目录与 Wi-Fi 规则，若新内核有选中配置则自动启动
+    func switchCore(to newCore: CoreType) {
+        guard newCore != activeCore else { return }
+        enqueue {
+            guard newCore != self.activeCore else { return }
+            await self.stop()
+
+            self.isSwitchingCore = true
+            self.activeCore = newCore
+            UserDefaults.standard.set(newCore.rawValue, forKey: Self.coreTypeKey)
+            self.uiName = nil
+            self.dashboardDownloadURL = nil
+            self.proxyPorts = nil
+
+            self.profileStore?.switchCore(to: newCore)
+            self.wiFiAutoSwitch?.switchCore(to: newCore)
+            self.profileURL = self.profileStore?.selected.flatMap { $0.isDeleted ? nil : $0.fileURL }
+            self.isSwitchingCore = false
+
+            if self.profileURL != nil {
+                await self.start()
+            }
+        }
     }
 
     /// 跟随选中的配置启动或切换内核；Observations 需要 macOS 26，这里用 withObservationTracking 逐次重新订阅
@@ -153,14 +223,25 @@ final class CoreManager {
                 self.observeSelection(of: profileStore)
             }
         }
+        guard !isSwitchingCore else { return }
         select(profile)
     }
 
-    /// TUN 会影响 DNS 覆写，需要以完整配置重新加载
+    /// TUN 会影响入站或 DNS 覆写，需要以完整配置重新加载
     func setTunEnabled(_ enabled: Bool) {
         guard enabled != isTunEnabled else { return }
         isTunEnabled = enabled
         scheduleApply()
+    }
+
+    /// 切换 IPv6 模式；仅当实际生效的 IPv6 开关变化时重新渲染并加载配置
+    func setIPv6Mode(_ mode: IPv6Mode) {
+        guard mode != ipv6Mode else { return }
+        let wasEnabled = isIPv6Enabled
+        ipv6Mode = mode
+        if isIPv6Enabled != wasEnabled {
+            scheduleApply()
+        }
     }
 
     /// 打开时把系统代理指向内核端口，关闭时恢复原有设置；内核未运行时等启动后再应用
@@ -202,9 +283,11 @@ final class CoreManager {
         }
     }
 
-    /// 解除策略组的锁定，恢复自动选择
+    /// 解除策略组的锁定，恢复自动选择（仅 mihomo 支持）
     func unfixProxy(in group: String) {
-        guard let index = proxyGroups.firstIndex(where: { $0.name == group }) else { return }
+        guard activeCore.supportsUnfixProxy,
+              let index = proxyGroups.firstIndex(where: { $0.name == group })
+        else { return }
         proxyGroups[index].fixed = nil
         enqueue {
             guard self.status == .running else { return }
@@ -229,6 +312,14 @@ final class CoreManager {
         }
     }
 
+    /// 复制面板密钥到剪贴板，便于首次在 sing-box-dashboard 中填写连接信息
+    func copyDashboardSecret() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(controller.secret, forType: .string)
+        Notifier.post(id: "panelSecret", title: "Dashboard Secret Copied", body: String(localized: "Paste the secret when connecting to sing-box-dashboard for the first time."))
+    }
+
     /// 打开面板，面板文件不存在时先下载
     func openPanel() {
         guard !isUpdatingPanel else { return }
@@ -241,7 +332,7 @@ final class CoreManager {
         }
     }
 
-    /// 从 external-ui-url 重新下载面板
+    /// 重新下载面板
     func updatePanel() {
         downloadPanel(failureTitle: "Failed to Update Dashboard") {
             Notifier.post(id: "panel", title: "Dashboard Updated", body: String(localized: "Reload the dashboard page in your browser to use the new version."))
@@ -251,10 +342,20 @@ final class CoreManager {
     private func downloadPanel(failureTitle: LocalizedStringResource, then completion: @escaping () -> Void) {
         guard !isUpdatingPanel else { return }
         isUpdatingPanel = true
+        let targetCore = activeCore
+        let downloadURL = dashboardDownloadURL ?? SingBoxConfig.defaultDashboardURL
+        let destination = targetCore.homeURL.appending(path: controller.uiPath, directoryHint: .isDirectory)
+        let ports = proxyPorts
+
         Task {
             defer { isUpdatingPanel = false }
             do {
-                try await controller.upgradeUI()
+                switch targetCore {
+                case .mihomo:
+                    try await controller.upgradeUI()
+                case .singBox:
+                    try await controller.downloadSingBoxDashboard(from: downloadURL, to: destination, proxyPorts: ports)
+                }
                 completion()
             } catch {
                 Notifier.post(id: "panel", title: failureTitle, body: error.localizedDescription)
@@ -264,8 +365,8 @@ final class CoreManager {
 
     /// 内核工作目录中面板的入口文件，与 panelURL 对应
     private var panelIndexURL: URL {
-        var url = CoreDirectory.homeURL.appending(path: controller.uiPath, directoryHint: .isDirectory)
-        if let uiName {
+        var url = activeCore.homeURL.appending(path: controller.uiPath, directoryHint: .isDirectory)
+        if activeCore == .mihomo, let uiName {
             url.append(path: uiName, directoryHint: .isDirectory)
         }
         return url.appending(path: "index.html", directoryHint: .notDirectory)
@@ -295,7 +396,7 @@ final class CoreManager {
         }
     }
 
-    /// 操作依次执行，避免启动、重载交错
+    /// 操作依次执行，避免启动、重载、切换内核交错
     @discardableResult
     private func enqueue(_ work: @escaping () async -> Void) -> Task<Void, Never> {
         let previous = operation
@@ -344,10 +445,13 @@ final class CoreManager {
         if let remote = ProxyMode(rawValue: config.mode.lowercased()) {
             self.mode = remote
         }
-        if let tun = config.tun {
-            self.isTunEnabled = tun.enable
+        // sing-box 的 GET /configs 不返回真实 TUN 状态和监听端口，避免覆盖本地渲染结果
+        if activeCore.supportsRemoteTunSync {
+            if let tun = config.tun {
+                self.isTunEnabled = tun.enable
+            }
+            updateProxyPorts(config)
         }
-        updateProxyPorts(config)
     }
 
     /// 混合端口优先，同时服务 HTTP 和 SOCKS；未配置混合端口时分别取各自端口
@@ -367,15 +471,16 @@ final class CoreManager {
 
     /// 内容未变时不赋值，避免菜单无谓刷新
     private func updateProxyGroups() {
-        let groups = ProxyGroup.list(from: proxies, mode: mode)
+        let groups = ProxyGroup.list(from: proxies, mode: mode, coreType: activeCore)
         if groups != proxyGroups {
             proxyGroups = groups
         }
     }
 
-    /// 内核的 system DNS 读到可用的服务器后缓存 5 分钟。开机时内核先于网络启动，可能缓存了过渡阶段
+    /// mihomo 的 system DNS 读到可用的服务器后缓存 5 分钟。开机时内核先于网络启动，可能缓存了过渡阶段
     /// 不可用的服务器（例如关闭 IPv6 时的 IPv6 服务器），导致断网；系统 DNS 变化后重载配置使其重新读取
     private func systemDNSDidChange() {
+        guard activeCore.needsDNSChangeReload else { return }
         dnsChangeTask?.cancel()
         dnsChangeTask = Task {
             // 网络就绪过程中会连续变化，resolv.conf 的更新也稍有延迟
@@ -386,10 +491,27 @@ final class CoreManager {
     }
 
     private func reloadIfDNSChanged() async {
+        guard activeCore.needsDNSChangeReload else { return }
         let servers = dnsMonitor?.servers ?? []
         guard status == .running, !servers.isEmpty, servers != loadedDNSServers else { return }
         NSLog("系统 DNS 变为 \(servers)，重载内核配置")
         await apply()
+    }
+
+    /// 监听物理网络公网 IPv6 状态变化；自动模式下防抖后重新渲染并应用配置
+    private func systemIPv6DidChange() {
+        ipv6ChangeTask?.cancel()
+        ipv6ChangeTask = Task {
+            // 切换网络或路由通告变更时会连续触发多次回调
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            let available = ipv6Monitor?.isAvailable ?? false
+            guard available != isSystemIPv6Available else { return }
+            isSystemIPv6Available = available
+            guard ipv6Mode == .auto, status == .running else { return }
+            NSLog("物理网络 IPv6 变为\(available ? "可用" : "不可用")，重新应用内核配置")
+            scheduleApply()
+        }
     }
 
     /// 读取内核端口，开启系统代理时指向内核
@@ -399,9 +521,22 @@ final class CoreManager {
         await applySystemProxy()
     }
 
-    /// 端口变化时才重写系统代理，避免定时同步反复修改系统设置
+    /// 端口变化时才重写系统代理，避免定时同步反复修改系统设置；无可用代理端口时恢复并关闭开关
     private func applySystemProxy(notifyOnFailure: Bool = true) async {
-        guard isSystemProxyEnabled, status == .running, let ports = proxyPorts else { return }
+        guard isSystemProxyEnabled, status == .running else { return }
+        guard let ports = proxyPorts, ports.http != nil || ports.socks != nil else {
+            NSLog("设置系统代理失败：未配置可用代理端口")
+            await restoreSystemProxy()
+            isSystemProxyEnabled = false
+            if notifyOnFailure {
+                Notifier.post(
+                    id: "systemProxy",
+                    title: "Failed to Set System Proxy",
+                    body: String(localized: "No proxy port configured (mixed, HTTP, or SOCKS).")
+                )
+            }
+            return
+        }
         guard let service = SystemProxy.activeServiceName else { return }
         // 切换网络后需要把代理设到新的服务上
         guard ports != appliedProxyPorts || service != SystemProxy.backedUpService else { return }
@@ -427,9 +562,9 @@ final class CoreManager {
         }
     }
 
-    /// 内核运行中则热重载，否则启动
+    /// 支持热重载的内核（mihomo）在运行中热重载，其余（sing-box）重启进程应用新配置
     private func apply() async {
-        guard status == .running, let profileURL else {
+        guard status == .running, let profileURL, activeCore.supportsHotReload else {
             await start()
             return
         }
@@ -439,6 +574,10 @@ final class CoreManager {
             let rendered = try await Self.render(config, profileURL: profileURL)
             try await controller.reloadConfigs(payload: rendered.payload)
             uiName = rendered.uiName
+            dashboardDownloadURL = rendered.dashboardDownloadURL
+            if let ports = rendered.proxyPorts {
+                proxyPorts = ports
+            }
             runtimeConfig = rendered.payload
             await refreshProxies()
             // 配置可能更换了代理端口
@@ -448,12 +587,12 @@ final class CoreManager {
         }
     }
 
-    /// 开启 TUN 时确保内核已授权，未授权则请求一次；失败时关闭 TUN 并返回 false
+    /// 开启 TUN 时确保当前内核已授权，未授权则请求一次；失败时关闭 TUN 并返回 false
     @discardableResult
     private func ensureTunPermission() async -> Bool {
-        guard isTunEnabled, !TunPermission.isGranted else { return true }
+        guard isTunEnabled, !TunPermission.isGranted(for: activeCore) else { return true }
         do {
-            try await TunPermission.grant()
+            try await TunPermission.grant(for: activeCore)
             return true
         } catch {
             isTunEnabled = false
@@ -477,28 +616,36 @@ final class CoreManager {
         await stop()
         guard let profileURL else { return }
 
+        let targetCore = activeCore
         status = .starting
         do {
-            guard FileManager.default.isExecutableFile(atPath: CoreDirectory.binaryURL.path) else {
-                throw CoreError.binaryNotFound
+            guard FileManager.default.isExecutableFile(atPath: targetCore.binaryURL.path) else {
+                throw CoreError.binaryNotFound(targetCore)
             }
             // 应用被强制结束时内核不会随之退出，残留的内核会占用端口，
             // 使新内核监听失败、请求被旧内核响应
             await Self.terminateLeftovers()
             // 内核文件被替换后权限会丢失，启动前重新确认
             await ensureTunPermission()
+            isSystemIPv6Available = ipv6Monitor?.isAvailable ?? false
             let rendered = try await Self.render(config, profileURL: profileURL)
             loadedDNSServers = dnsMonitor?.servers ?? []
-            let process = try launch(payload: rendered.payload)
+            let process = try launch(payload: rendered.payload, coreType: targetCore)
             uiName = rendered.uiName
+            dashboardDownloadURL = rendered.dashboardDownloadURL
+            proxyPorts = rendered.proxyPorts
             self.process = process
 
-            let version = try await waitUntilReady(process)
+            let version = try await waitUntilReady(process, coreType: targetCore)
             status = .running
             runtimeConfig = rendered.payload
             await refreshProxies()
             await syncProxySettings()
-            Notifier.post(id: "core", title: "Core Started", body: String(localized: "mihomo \(version), \(mode.title) mode"))
+
+            let label = version.lowercased().hasPrefix(targetCore.displayName.lowercased())
+                ? version
+                : "\(targetCore.displayName) \(version)"
+            Notifier.post(id: "core", title: "Core Started", body: String(localized: "\(label), \(mode.title) mode"))
         } catch {
             await stop()
             status = .failed
@@ -515,44 +662,60 @@ final class CoreManager {
         await Self.terminate(process)
     }
 
-    /// 配置通过 CLASH_CONFIG_STRING 环境变量（等同 -config）以 base64 传入，
-    /// 避免密钥和节点信息出现在进程参数中
-    private func launch(payload: String) throws -> Process {
-        guard CoreDirectory.createIfNeeded() else { throw CoreError.launchFailed }
+    /// 避免密钥和节点信息出现在进程参数中：
+    /// - mihomo 通过 CLASH_CONFIG_STRING 环境变量（base64）传入
+    /// - sing-box 通过标准输入（-c stdin）传入
+    private func launch(payload: String, coreType: CoreType) throws -> Process {
+        guard CoreDirectory.createIfNeeded(for: coreType) else { throw CoreError.launchFailed }
 
-        let logURL = CoreDirectory.logURL
+        let logURL = coreType.logURL
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
         let log = try FileHandle(forWritingTo: logURL)
         defer { try? log.close() }
 
-        var environment = ProcessInfo.processInfo.environment
-        environment["CLASH_CONFIG_STRING"] = Data(payload.utf8).base64EncodedString()
-
         let process = Process()
-        process.executableURL = CoreDirectory.binaryURL
-        process.arguments = ["-d", CoreDirectory.homeURL.path]
-        process.environment = environment
+        process.executableURL = coreType.binaryURL
         process.standardOutput = log
         process.standardError = log
+
+        var inputPipe: Pipe?
+        switch coreType {
+        case .mihomo:
+            var environment = ProcessInfo.processInfo.environment
+            environment["CLASH_CONFIG_STRING"] = Data(payload.utf8).base64EncodedString()
+            process.arguments = ["-d", coreType.homeURL.path]
+            process.environment = environment
+        case .singBox:
+            let pipe = Pipe()
+            process.arguments = ["run", "-D", coreType.homeURL.path, "-c", "stdin", "--disable-color"]
+            process.standardInput = pipe
+            inputPipe = pipe
+        }
+
         process.terminationHandler = { [weak self] process in
             let pid = process.processIdentifier
             let code = process.terminationStatus
             Task { @MainActor in
-                self?.processDidExit(pid: pid, code: code)
+                self?.processDidExit(pid: pid, code: code, coreType: coreType)
             }
         }
 
         do {
             try process.run()
         } catch {
-            NSLog("启动内核失败：\(error)")
+            NSLog("启动内核 \(coreType.displayName) 失败：\(error)")
             throw CoreError.launchFailed
+        }
+
+        if let inputPipe {
+            try? inputPipe.fileHandleForWriting.write(contentsOf: Data(payload.utf8))
+            try? inputPipe.fileHandleForWriting.close()
         }
         return process
     }
 
     /// 轮询 RESTful API，可访问即视为启动成功
-    private func waitUntilReady(_ process: Process) async throws -> String {
+    private func waitUntilReady(_ process: Process, coreType: CoreType) async throws -> String {
         for _ in 0..<50 {
             try? await Task.sleep(for: .milliseconds(200))
             guard process.isRunning else { break }
@@ -563,16 +726,16 @@ final class CoreManager {
         if process.isRunning {
             throw CoreError.timeout
         }
-        throw CoreError.exited(Self.lastLogError())
+        throw CoreError.exited(Self.lastLogError(for: coreType))
     }
 
     /// 运行中意外退出时提示；启动阶段的退出由 waitUntilReady 处理
-    private func processDidExit(pid: Int32, code: Int32) {
+    private func processDidExit(pid: Int32, code: Int32, coreType: CoreType) {
         guard let process, process.processIdentifier == pid, status == .running else { return }
         self.process = nil
         status = .failed
         enqueue { await self.restoreSystemProxy() }
-        Notifier.post(id: "core", title: "Core Exited", body: Self.lastLogError() ?? String(localized: "Exit code \(code)"))
+        Notifier.post(id: "core", title: "Core Exited", body: Self.lastLogError(for: coreType) ?? String(localized: "Exit code \(code)"))
     }
 
     @concurrent
@@ -586,10 +749,13 @@ final class CoreManager {
         await terminate(pid: process.processIdentifier) { process.isRunning }
     }
 
-    /// 结束所有从内核目录启动的进程；调用前须已停止当前内核
+    /// 结束所有从内核目录启动的残留内核进程；跳过正在运行的版本读取与配置校验辅助子进程
     private static func terminateLeftovers() async {
-        let path = CoreDirectory.binaryURL.path
-        for pid in runningPIDs() where executablePath(of: pid) == path {
+        let paths = Set(CoreType.allCases.map { $0.binaryURL.path })
+        for pid in runningPIDs()
+            where !CoreHelperProcesses.contains(pid) && executablePath(of: pid).map(paths.contains) == true {
+            // 再次检查，避免读取列表与发信号之间刚被注册为辅助子进程
+            guard !CoreHelperProcesses.contains(pid) else { continue }
             NSLog("结束残留的内核进程 \(pid)")
             await terminate(pid: pid) { kill(pid, 0) == 0 }
         }
@@ -621,24 +787,28 @@ final class CoreManager {
     }
 
     /// 从日志中取最后一条错误
-    private static func lastLogError() -> String? {
-        guard let text = try? String(contentsOf: CoreDirectory.logURL, encoding: .utf8) else { return nil }
-        return CoreLog.lastError(in: text)
+    private static func lastLogError(for coreType: CoreType) -> String? {
+        guard let text = try? String(contentsOf: coreType.logURL, encoding: .utf8) else { return nil }
+        return CoreLog.lastError(in: text, for: coreType)
     }
 }
 
 enum CoreError: LocalizedError {
-    case binaryNotFound
+    case binaryNotFound(CoreType)
     case launchFailed
     case timeout
     case exited(String?)
 
     var errorDescription: String? {
         switch self {
-        case .binaryNotFound: String(localized: "Core not found. Place mihomo in the core folder.")
-        case .launchFailed: String(localized: "Unable to run the core")
-        case .timeout: String(localized: "Timed out waiting for the core to respond")
-        case .exited(let message): message ?? String(localized: "The core exited unexpectedly")
+        case .binaryNotFound(let coreType):
+            String(localized: "Core not found. Place \(coreType.binaryName) in the core folder.")
+        case .launchFailed:
+            String(localized: "Unable to run the core")
+        case .timeout:
+            String(localized: "Timed out waiting for the core to respond")
+        case .exited(let message):
+            message ?? String(localized: "The core exited unexpectedly")
         }
     }
 }

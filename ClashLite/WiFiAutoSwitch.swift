@@ -26,7 +26,7 @@ struct WiFiRule: Codable, Hashable, Identifiable {
 
 /// 参考 sing-box：根据当前 Wi-Fi 同时切换配置、TUN 和代理模式，CoreManager 将同一轮的修改合并为一次热重载。
 /// macOS 14 起读取 SSID 需要定位权限，仅在开启此功能时请求。
-/// 只在网络变化、开启功能或修改规则时切换，之后手动做的修改保持到下次网络变化
+/// 规则按内核分别保存（各内核配置目录独立）；只在网络变化、开启功能或修改规则时切换，之后手动做的修改保持到下次网络变化
 @Observable
 final class WiFiAutoSwitch {
     enum Authorization {
@@ -54,8 +54,8 @@ final class WiFiAutoSwitch {
 
     var rules: [WiFiRule] {
         didSet {
-            guard rules != oldValue else { return }
-            Self.save(rules, forKey: Self.rulesKey)
+            guard !isLoadingRules, rules != oldValue else { return }
+            Self.save(rules, forKey: Self.rulesKey(for: coreType))
             guard !isRenamingProfile else { return }
             refresh(force: true)
         }
@@ -64,13 +64,14 @@ final class WiFiAutoSwitch {
     /// 没有规则匹配（包括未连接 Wi-Fi）时应用的设置
     var otherNetworks: WiFiAction {
         didSet {
-            guard otherNetworks != oldValue else { return }
-            Self.save(otherNetworks, forKey: Self.otherNetworksKey)
+            guard !isLoadingRules, otherNetworks != oldValue else { return }
+            Self.save(otherNetworks, forKey: Self.otherNetworksKey(for: coreType))
             guard !isRenamingProfile else { return }
             refresh(force: true)
         }
     }
 
+    private(set) var coreType: CoreType
     private(set) var authorization: Authorization = .notDetermined
 
     /// 当前连接的 Wi-Fi，仅在开启且已授权时读取
@@ -84,17 +85,19 @@ final class WiFiAutoSwitch {
     @ObservationIgnored private var changeTask: Task<Void, Never>?
     /// 配置重命名只是更新引用，不应重新应用规则覆盖手动做的修改
     @ObservationIgnored private var isRenamingProfile = false
+    /// 切换内核载入对应规则时不触发回写与自动重载
+    @ObservationIgnored private var isLoadingRules = false
     @ObservationIgnored private static let enabledKey = "wifiAutoSwitchEnabled"
-    @ObservationIgnored private static let rulesKey = "wifiAutoSwitchRules"
-    @ObservationIgnored private static let otherNetworksKey = "wifiAutoSwitchOtherNetworks"
 
     /// 在 CoreManager 之前创建并先切换配置，再通过 attach(_:) 应用 TUN 和代理模式，
     /// 使内核首次启动就使用匹配的设置
     init(profileStore: ProfileStore) {
+        let coreType = profileStore.coreType
+        self.coreType = coreType
         self.profileStore = profileStore
         isEnabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
-        rules = Self.load([WiFiRule].self, forKey: Self.rulesKey) ?? []
-        otherNetworks = Self.load(WiFiAction.self, forKey: Self.otherNetworksKey) ?? WiFiAction()
+        rules = Self.load([WiFiRule].self, forKey: Self.rulesKey(for: coreType)) ?? []
+        otherNetworks = Self.load(WiFiAction.self, forKey: Self.otherNetworksKey(for: coreType)) ?? WiFiAction()
 
         delegate.onWiFiChange = { [weak self] in
             Task { @MainActor [self] in self?.wiFiDidChange() }
@@ -118,8 +121,19 @@ final class WiFiAutoSwitch {
         refresh(force: true, notify: false)
     }
 
-    /// 配置重命名后更新规则中引用的配置名称
-    func renameProfile(from oldName: String, to newName: String) {
+    /// 切换内核时载入该内核对应的 Wi-Fi 规则
+    func switchCore(to newCore: CoreType) {
+        guard newCore != coreType else { return }
+        isLoadingRules = true
+        defer { isLoadingRules = false }
+        coreType = newCore
+        rules = Self.load([WiFiRule].self, forKey: Self.rulesKey(for: newCore)) ?? []
+        otherNetworks = Self.load(WiFiAction.self, forKey: Self.otherNetworksKey(for: newCore)) ?? WiFiAction()
+    }
+
+    /// 配置重命名后更新对应内核规则中引用的配置名称
+    func renameProfile(for coreType: CoreType, from oldName: String, to newName: String) {
+        guard coreType == self.coreType else { return }
         isRenamingProfile = true
         defer { isRenamingProfile = false }
         for index in rules.indices where rules[index].action.profileName == oldName {
@@ -134,6 +148,20 @@ final class WiFiAutoSwitch {
     static func openLocationSettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices") else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    private static func rulesKey(for coreType: CoreType) -> String {
+        switch coreType {
+        case .mihomo: "wifiAutoSwitchRules"
+        case .singBox: "wifiAutoSwitchRules_sing-box"
+        }
+    }
+
+    private static func otherNetworksKey(for coreType: CoreType) -> String {
+        switch coreType {
+        case .mihomo: "wifiAutoSwitchOtherNetworks"
+        case .singBox: "wifiAutoSwitchOtherNetworks_sing-box"
+        }
     }
 
     private func startMonitoring() {

@@ -27,20 +27,21 @@ nonisolated struct ProxyGroup: Identifiable, Equatable {
 
     var name: String
     var now: String?
-    /// URLTest、Fallback 被手动锁定的节点
+    /// URLTest、Fallback 被手动锁定的节点（仅 mihomo）
     var fixed: String?
     var members: [Member]
-    /// 内核只允许手动切换 Selector、URLTest、Fallback，LoadBalance、Relay 等会被拒绝
+    /// mihomo 允许手动切换 Selector/URLTest/Fallback；sing-box 仅允许切换 Selector
     var isSelectable: Bool
 
     var id: String { name }
 
     /// 参考 clash-verge-rev 的托盘菜单：按 GLOBAL 中的顺序（即配置文件顺序）排列，
-    /// 全局模式只显示 GLOBAL，其余模式显示除 GLOBAL 外未隐藏的策略组
-    static func list(from proxies: [String: CoreController.Proxy], mode: ProxyMode) -> [ProxyGroup] {
+    /// 全局模式在 GLOBAL 可选时只显示 GLOBAL，其余情况显示除 GLOBAL 外未隐藏的策略组
+    static func list(from proxies: [String: CoreController.Proxy], mode: ProxyMode, coreType: CoreType) -> [ProxyGroup] {
         let global = "GLOBAL"
+        let useGlobalOnly = mode == .global && (coreType == .mihomo || proxies[global]?.type == "Selector")
         let names: [String]
-        if mode == .global {
+        if useGlobalOnly {
             names = [global]
         } else {
             let ordered = proxies[global]?.all ?? []
@@ -51,8 +52,9 @@ nonisolated struct ProxyGroup: Identifiable, Equatable {
         return names.compactMap { name in
             guard let proxy = proxies[name], let all = proxy.all, !all.isEmpty, proxy.hidden != true else { return nil }
             let members = all.map { Member(name: $0, delay: delay(of: $0, testURL: proxy.testUrl, in: proxies)) }
-            let isSelectable = ["Selector", "URLTest", "Fallback"].contains(proxy.type)
-            return ProxyGroup(name: name, now: proxy.now, fixed: proxy.fixed.flatMap { $0.isEmpty ? nil : $0 }, members: members, isSelectable: isSelectable)
+            let isSelectable = coreType.selectableGroupTypes.contains(proxy.type)
+            let fixed = coreType.supportsUnfixProxy ? proxy.fixed.flatMap { $0.isEmpty ? nil : $0 } : nil
+            return ProxyGroup(name: name, now: proxy.now, fixed: fixed, members: members, isSelectable: isSelectable)
         }
     }
 

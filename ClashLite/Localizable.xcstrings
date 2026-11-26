@@ -11,6 +11,26 @@
         }
       }
     },
+    "%@, %@ mode" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@，%2$@模式"
+          }
+        }
+      }
+    },
+    "%@: %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@：%2$@"
+          }
+        }
+      }
+    },
     "A profile named “%@” already exists" : {
       "localizations" : {
         "zh-Hans" : {
@@ -131,12 +151,62 @@
         }
       }
     },
+    "Auto" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动"
+          }
+        }
+      }
+    },
+    "Auto (Off)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动（已关闭）"
+          }
+        }
+      }
+    },
+    "Auto (On)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动（已开启）"
+          }
+        }
+      }
+    },
+    "Auto Update" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动更新"
+          }
+        }
+      }
+    },
     "Auto Update: %@" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "自动更新：%@"
+          }
+        }
+      }
+    },
+    "Back" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "返回"
           }
         }
       }
@@ -201,6 +271,26 @@
         }
       }
     },
+    "Copy Dashboard Secret" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制面板密钥"
+          }
+        }
+      }
+    },
+    "Core" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "内核"
+          }
+        }
+      }
+    },
     "Core API request failed (HTTP %lld)" : {
       "localizations" : {
         "zh-Hans" : {
@@ -261,6 +351,16 @@
         }
       }
     },
+    "Core not found. Place %@ in the core folder." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未找到内核，请将 %@ 放入内核目录"
+          }
+        }
+      }
+    },
     "Core not found. Place mihomo in the core folder." : {
       "localizations" : {
         "zh-Hans" : {
@@ -297,6 +397,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "当前 Wi-Fi"
+          }
+        }
+      }
+    },
+    "Dashboard & Log" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "面板与日志"
+          }
+        }
+      }
+    },
+    "Dashboard Secret Copied" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已复制面板密钥"
           }
         }
       }
@@ -577,12 +697,82 @@
         }
       }
     },
+    "IPv6" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "IPv6"
+          }
+        }
+      }
+    },
+    "IPv6 Available" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "IPv6 可用"
+          }
+        }
+      }
+    },
+    "IPv6 Unavailable" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "IPv6 不可用"
+          }
+        }
+      }
+    },
+    "Invalid JSON: %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "JSON 格式错误：%@"
+          }
+        }
+      }
+    },
     "Invalid YAML: %@" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "YAML 格式错误：%@"
+          }
+        }
+      }
+    },
+    "Invalid dashboard download URL" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "面板下载地址无效"
+          }
+        }
+      }
+    },
+    "JSON object applied only to this sing-box profile before the global override. For arrays, use +key to prepend and key+ to append." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "JSON 对象，只对此 sing-box 配置生效，在全局覆写之前合并；数组可用 +key 前置、key+ 追加"
+          }
+        }
+      }
+    },
+    "JSON object applied to all sing-box profiles after the profile override. For arrays, use +key to prepend and key+ to append." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "JSON 对象，对所有 sing-box 配置生效，在配置覆写之后合并；数组可用 +key 前置、key+ 追加"
           }
         }
       }
@@ -613,6 +803,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保持网卡代理"
+          }
+        }
+      }
+    },
+    "Kernel: %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "内核：%@"
           }
         }
       }
@@ -727,6 +927,16 @@
         }
       }
     },
+    "No proxy port configured (mixed, HTTP, or SOCKS)." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前配置未配置代理端口（mixed、HTTP 或 SOCKS）"
+          }
+        }
+      }
+    },
     "None" : {
       "localizations" : {
         "zh-Hans" : {
@@ -753,6 +963,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未连接"
+          }
+        }
+      }
+    },
+    "Not Installed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未安装"
           }
         }
       }
@@ -857,6 +1077,16 @@
         }
       }
     },
+    "Paste the secret when connecting to sing-box-dashboard for the first time." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "首次连接 sing-box-dashboard 时粘贴此密钥即可"
+          }
+        }
+      }
+    },
     "Profile" : {
       "localizations" : {
         "zh-Hans" : {
@@ -953,6 +1183,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "配置：%@"
+          }
+        }
+      }
+    },
+    "Proxy" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代理"
           }
         }
       }
@@ -1083,6 +1323,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保存"
+          }
+        }
+      }
+    },
+    "Settings" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置"
           }
         }
       }
@@ -1237,6 +1487,16 @@
         }
       }
     },
+    "The content must be a JSON object" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "内容必须是 JSON 对象"
+          }
+        }
+      }
+    },
     "The core exited unexpectedly" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1363,6 +1623,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法修改系统代理设置"
+          }
+        }
+      }
+    },
+    "Unable to extract the dashboard archive" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法解压面板压缩包"
           }
         }
       }

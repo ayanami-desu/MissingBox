@@ -9,29 +9,25 @@ import AppKit
 import Observation
 
 enum ProfileDirectory {
-    /// ~/Library/Application Support/<Bundle ID>/Profiles
-    static var url: URL {
-        URL.applicationSupportDirectory
-            .appending(path: Bundle.main.bundleIdentifier ?? "ClashLite", directoryHint: .isDirectory)
-            .appending(path: "Profiles", directoryHint: .isDirectory)
+    /// 各内核独立的配置目录：mihomo 为 Profiles/，sing-box 为 Profiles-sing-box/
+    static func url(for coreType: CoreType) -> URL {
+        coreType.profilesURL
     }
 
     /// 配置的附加信息（订阅链接等），以配置名称为键；配置列表本身以目录中的文件为准
-    static var metadataURL: URL {
-        url.appending(path: "profiles.json", directoryHint: .notDirectory)
+    static func metadataURL(for coreType: CoreType) -> URL {
+        url(for: coreType).appending(path: "profiles.json", directoryHint: .notDirectory)
     }
 
-    static let fileExtensions: Set<String> = ["yaml", "yml"]
-
     /// 新配置以名称命名，便于在 Finder 中辨认
-    static func fileURL(forName name: String) -> URL {
-        url.appending(path: "\(name).yaml", directoryHint: .notDirectory)
+    static func fileURL(forName name: String, coreType: CoreType) -> URL {
+        url(for: coreType).appending(path: "\(name).\(coreType.defaultProfileExtension)", directoryHint: .notDirectory)
     }
 
     @discardableResult
-    static func createIfNeeded() -> Bool {
+    static func createIfNeeded(for coreType: CoreType) -> Bool {
         do {
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: url(for: coreType), withIntermediateDirectories: true)
             return true
         } catch {
             NSLog("创建配置目录失败：\(error)")
@@ -39,13 +35,13 @@ enum ProfileDirectory {
         }
     }
 
-    /// 打开配置目录；传入的文件存在时在 Finder 中选中它
-    static func open(selecting file: URL? = nil) {
-        guard createIfNeeded() else { return }
+    /// 打开当前内核的配置目录；传入的文件存在时在 Finder 中选中它
+    static func open(for coreType: CoreType, selecting file: URL? = nil) {
+        guard createIfNeeded(for: coreType) else { return }
         if let file, FileManager.default.fileExists(atPath: file.path) {
             NSWorkspace.shared.activateFileViewerSelecting([file])
         } else {
-            NSWorkspace.shared.open(url)
+            NSWorkspace.shared.open(url(for: coreType))
         }
     }
 }
@@ -109,15 +105,16 @@ enum ProfileError: LocalizedError {
     }
 }
 
-/// 管理配置：以配置目录中的文件为准生成列表，监听目录变化自动刷新
+/// 管理当前内核的配置：以配置目录中的文件为准生成列表，监听目录变化自动刷新
 @Observable
 final class ProfileStore {
+    private(set) var coreType: CoreType
     private(set) var profiles: [Profile] = []
 
     var selectedName: String? {
         didSet {
-            guard selectedName != oldValue else { return }
-            UserDefaults.standard.set(selectedName, forKey: Self.selectedKey)
+            guard !isSwitchingCore, selectedName != oldValue else { return }
+            UserDefaults.standard.set(selectedName, forKey: coreType.selectedProfileKey)
             // 切换后不再保留已删除的旧配置
             reload()
         }
@@ -133,38 +130,60 @@ final class ProfileStore {
     @ObservationIgnored private var subscriptions: [String: Subscription] = [:]
     @ObservationIgnored private var source: DispatchSourceFileSystemObject?
     @ObservationIgnored private var autoUpdateTask: Task<Void, Never>?
+    @ObservationIgnored private var isSwitchingCore = false
     @ObservationIgnored private static let autoUpdateCheckInterval = Duration.seconds(600)
     /// 订阅未提供 profile-update-interval 时的默认自动更新间隔（小时）
     @ObservationIgnored private static let defaultInterval = 24
 
-    /// 订阅配置更新完成后调用，参数为配置名称
-    @ObservationIgnored var onUpdate: ((String) -> Void)?
-    /// 配置重命名后调用，参数为旧名称和新名称，用于迁移其他地方引用的配置名称
-    @ObservationIgnored var onRename: ((String, String) -> Void)?
-    @ObservationIgnored private static let selectedKey = "selectedProfileName"
+    /// 订阅配置更新完成后调用，参数为内核类型和配置名称
+    @ObservationIgnored var onUpdate: ((CoreType, String) -> Void)?
+    /// 配置重命名后调用，参数为内核类型、旧名称和新名称，用于迁移其他地方引用的配置名称
+    @ObservationIgnored var onRename: ((CoreType, String, String) -> Void)?
 
-    init() {
+    init(coreType: CoreType = .mihomo) {
+        self.coreType = coreType
+        loadCurrentCore()
+        startAutoUpdate()
+    }
+
+    /// 切换到另一内核的配置目录，保留各自上次选中的配置
+    func switchCore(to newCore: CoreType) {
+        guard newCore != coreType else { return }
+        source?.cancel()
+        source = nil
+
+        isSwitchingCore = true
+        defer { isSwitchingCore = false }
+
+        coreType = newCore
+        updatingNames = []
+        loadCurrentCore()
+    }
+
+    private func loadCurrentCore() {
+        subscriptions = [:]
         loadSubscriptions()
+        // 先按无选中状态扫描目录，再恢复上次选中的有效配置
+        selectedName = nil
         reload()
 
-        // 启动时选中的文件已不存在，则保持未选中状态
-        let stored = UserDefaults.standard.string(forKey: Self.selectedKey)
+        let stored = UserDefaults.standard.string(forKey: coreType.selectedProfileKey)
         selectedName = profiles.contains { $0.name == stored } ? stored : nil
-
         startMonitoring()
-        startAutoUpdate()
     }
 
     /// 下载订阅并保存为新配置
     func addSubscription(url: URL, name: String) async throws {
+        let targetCore = coreType
         try checkName(name)
-        let (data, interval) = try await Self.download(url)
+        let (data, interval) = try await Self.download(url, userAgent: targetCore.subscriptionUserAgent)
         let subscription = Subscription(url: url, updatedAt: .now, interval: interval ?? Self.defaultInterval)
-        try await add(name: name, data: data, subscription: subscription)
+        try await add(name: name, data: data, subscription: subscription, coreType: targetCore)
     }
 
     /// 复制本地配置文件到配置目录，原文件不受影响
     func importLocal(fileURL: URL, name: String) async throws {
+        let targetCore = coreType
         try checkName(name)
 
         let accessing = fileURL.startAccessingSecurityScopedResource()
@@ -177,19 +196,25 @@ final class ProfileStore {
             NSLog("读取本地配置失败：\(error)")
             throw ProfileError.readFailed
         }
-        try await add(name: name, data: data, subscription: nil)
+        try await add(name: name, data: data, subscription: nil, coreType: targetCore)
     }
 
     /// 重新下载订阅并覆盖配置文件，配置覆写保留；传入新的订阅链接时，校验通过后才替换原链接
     func update(_ profile: Profile, from url: URL? = nil) async throws {
+        let targetCore = coreType
         guard let subscription = profile.subscription, !updatingNames.contains(profile.name) else { return }
         updatingNames.insert(profile.name)
         defer { updatingNames.remove(profile.name) }
 
-        let (data, _) = try await Self.download(url ?? subscription.url)
-        try await ConfigValidator.validate(profile: data, profileOverride: ConfigOverride.profile(profile.name).load())
+        let (data, _) = try await Self.download(url ?? subscription.url, userAgent: targetCore.subscriptionUserAgent)
+        try await ConfigValidator.validate(
+            profile: data,
+            profileOverride: ConfigOverride.profile(targetCore, profile.name).load(),
+            coreType: targetCore
+        )
         try write(data, to: profile)
 
+        guard coreType == targetCore else { return }
         // 下载期间可能修改了自动更新间隔，以最新的为准
         if let url {
             subscriptions[profile.name]?.url = url
@@ -197,7 +222,7 @@ final class ProfileStore {
         subscriptions[profile.name]?.updatedAt = .now
         saveSubscriptions()
         reload()
-        onUpdate?(profile.name)
+        onUpdate?(targetCore, profile.name)
     }
 
     /// 设置订阅的自动更新间隔（小时），nil 表示关闭
@@ -216,14 +241,14 @@ final class ProfileStore {
         try checkName(newName, excluding: oldName)
         try checkExists(profile)
 
-        let newURL = ProfileDirectory.fileURL(forName: newName)
+        let newURL = ProfileDirectory.fileURL(forName: newName, coreType: coreType)
         guard FileManager.moveItemAllowingCaseChange(at: profile.fileURL, to: newURL) else {
             throw ProfileError.saveFailed
         }
-        ConfigOverride.renameProfileOverride(from: oldName, to: newName)
+        ConfigOverride.renameProfileOverride(for: coreType, from: oldName, to: newName)
         subscriptions[newName] = subscriptions.removeValue(forKey: oldName)
         saveSubscriptions()
-        onRename?(oldName, newName)
+        onRename?(coreType, oldName, newName)
 
         if selectedName == oldName {
             // didSet 中会刷新列表
@@ -247,13 +272,19 @@ final class ProfileStore {
 
     /// 校验后保存编辑过的配置内容
     func saveContent(_ text: String, of profile: Profile) async throws {
+        let targetCore = coreType
         let data = Data(text.utf8)
-        try await ConfigValidator.validate(profile: data, profileOverride: ConfigOverride.profile(profile.name).load())
+        try await ConfigValidator.validate(
+            profile: data,
+            profileOverride: ConfigOverride.profile(targetCore, profile.name).load(),
+            coreType: targetCore
+        )
         try write(data, to: profile)
     }
 
     /// 校验应用覆写后的配置，通过后保存配置覆写
     func saveOverride(_ text: String, of profile: Profile) async throws {
+        let targetCore = coreType
         let data: Data
         do {
             data = try Data(contentsOf: profile.fileURL)
@@ -261,9 +292,9 @@ final class ProfileStore {
             NSLog("读取配置失败：\(error)")
             throw ProfileError.readFailed
         }
-        try await ConfigValidator.validate(profileOverride: text, of: data)
+        try await ConfigValidator.validate(profileOverride: text, of: data, coreType: targetCore)
         try checkExists(profile)
-        try ConfigOverride.profile(profile.name).save(text)
+        try ConfigOverride.profile(targetCore, profile.name).save(text)
     }
 
     /// 下载和校验期间配置可能已被删除，写入前确认，避免重新创建
@@ -291,22 +322,25 @@ final class ProfileStore {
         }
         if let current, current.caseInsensitiveCompare(name) == .orderedSame { return }
         let exists = profiles.contains { !$0.isDeleted && $0.name.caseInsensitiveCompare(name) == .orderedSame }
-            || FileManager.default.fileExists(atPath: ProfileDirectory.fileURL(forName: name).path)
+            || FileManager.default.fileExists(atPath: ProfileDirectory.fileURL(forName: name, coreType: coreType).path)
         if exists {
             throw ProfileError.duplicateName(name)
         }
     }
 
     /// 校验配置本身和应用全局覆写后的配置，通过后写入配置文件，首个配置会自动选中
-    private func add(name: String, data: Data, subscription: Subscription?) async throws {
-        try await ConfigValidator.validate(profile: data, profileOverride: "")
+    private func add(name: String, data: Data, subscription: Subscription?, coreType targetCore: CoreType) async throws {
+        try await ConfigValidator.validate(profile: data, profileOverride: "", coreType: targetCore)
+
+        // 若异步校验期间用户切换了内核，中止写入避免写错目录
+        guard coreType == targetCore else { return }
 
         // 下载和校验期间可能已添加同名配置，写入前再确认一次
         try checkName(name)
 
-        guard ProfileDirectory.createIfNeeded() else { throw ProfileError.saveFailed }
+        guard ProfileDirectory.createIfNeeded(for: targetCore) else { throw ProfileError.saveFailed }
         do {
-            try data.write(to: ProfileDirectory.fileURL(forName: name), options: .atomic)
+            try data.write(to: ProfileDirectory.fileURL(forName: name, coreType: targetCore), options: .atomic)
         } catch {
             NSLog("写入配置失败：\(error)")
             throw ProfileError.saveFailed
@@ -322,14 +356,19 @@ final class ProfileStore {
 
     /// 扫描配置目录重建列表；选中的配置文件被删除时以“已删除”状态保留
     private func reload() {
+        let dirURL = ProfileDirectory.url(for: coreType)
         let files = (try? FileManager.default.contentsOfDirectory(
-            at: ProfileDirectory.url,
+            at: dirURL,
             includingPropertiesForKeys: nil,
             options: .skipsHiddenFiles
         )) ?? []
 
+        // 排除同目录中存放订阅元数据的 profiles.json
         var profiles = files
-            .filter { ProfileDirectory.fileExtensions.contains($0.pathExtension.lowercased()) }
+            .filter {
+                $0.lastPathComponent != "profiles.json"
+                    && coreType.profileFileExtensions.contains($0.pathExtension.lowercased())
+            }
             .map { url in
                 let name = url.deletingPathExtension().lastPathComponent
                 return Profile(name: name, fileURL: url, subscription: subscriptions[name])
@@ -340,7 +379,7 @@ final class ProfileStore {
         if let selectedName, !profiles.contains(where: { $0.name == selectedName }) {
             profiles.append(Profile(
                 name: selectedName,
-                fileURL: ProfileDirectory.fileURL(forName: selectedName),
+                fileURL: ProfileDirectory.fileURL(forName: selectedName, coreType: coreType),
                 isDeleted: true
             ))
         }
@@ -349,7 +388,7 @@ final class ProfileStore {
 
         // 清理文件已不存在的订阅信息和配置覆写，避免之后同名的本地文件被误认为订阅或沿用旧覆写
         let existing = Set(profiles.lazy.filter { !$0.isDeleted }.map(\.name))
-        ConfigOverride.removeProfileOverrides(except: existing)
+        ConfigOverride.removeProfileOverrides(for: coreType, except: existing)
         let stale = subscriptions.keys.filter { !existing.contains($0) }
         if !stale.isEmpty {
             stale.forEach { subscriptions[$0] = nil }
@@ -358,8 +397,8 @@ final class ProfileStore {
     }
 
     private func startMonitoring() {
-        guard ProfileDirectory.createIfNeeded() else { return }
-        let fd = open(ProfileDirectory.url.path, O_EVTONLY)
+        guard ProfileDirectory.createIfNeeded(for: coreType) else { return }
+        let fd = open(ProfileDirectory.url(for: coreType).path, O_EVTONLY)
         guard fd >= 0 else { return }
 
         let source = DispatchSource.makeFileSystemObjectSource(
@@ -403,7 +442,7 @@ final class ProfileStore {
     }
 
     private func loadSubscriptions() {
-        guard let data = try? Data(contentsOf: ProfileDirectory.metadataURL) else { return }
+        guard let data = try? Data(contentsOf: ProfileDirectory.metadataURL(for: coreType)) else { return }
         do {
             subscriptions = try JSONDecoder().decode([String: Subscription].self, from: data)
         } catch {
@@ -412,20 +451,20 @@ final class ProfileStore {
     }
 
     private func saveSubscriptions() {
-        guard ProfileDirectory.createIfNeeded() else { return }
+        guard ProfileDirectory.createIfNeeded(for: coreType) else { return }
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(subscriptions).write(to: ProfileDirectory.metadataURL, options: .atomic)
+            try encoder.encode(subscriptions).write(to: ProfileDirectory.metadataURL(for: coreType), options: .atomic)
         } catch {
             NSLog("保存配置信息失败：\(error)")
         }
     }
 
-    /// 以 clash.meta 的 UA 请求，使订阅服务返回 Clash 格式的 YAML；同时返回订阅建议的更新间隔（小时）
-    private static func download(_ url: URL) async throws -> (Data, Int?) {
+    /// 按当前内核对应的 UA 请求，使订阅服务返回对应格式的配置；同时返回订阅建议的更新间隔（小时）
+    private static func download(_ url: URL, userAgent: String) async throws -> (Data, Int?) {
         var request = URLRequest(url: url, timeoutInterval: 30)
-        request.setValue("clash.meta", forHTTPHeaderField: "User-Agent")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {

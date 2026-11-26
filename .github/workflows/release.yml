@@ -58,7 +58,8 @@ jobs:
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
     outputs:
-      mihomo: ${{ steps.mihomo.outputs.tag }}
+      mihomo: ${{ steps.mihomo.outputs.version }}
+      sing_box: ${{ steps.sing_box.outputs.version }}
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -103,6 +104,29 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$CORE_VERSION" >> "$GITHUB_OUTPUT"
 
+      # 下载最新的 sing-box alpha 预发布（若无 alpha 则回退到最新预发布）
+      - name: Download sing-box
+        id: sing_box
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="$(gh api "repos/SagerNet/sing-box/releases?per_page=20" \
+            --jq '([.[] | select(.prerelease == true and (.tag_name | contains("alpha")))][0] // [.[] | select(.prerelease == true)][0] // .[0]).tag_name')"
+          if [[ -z "$TAG" || "$TAG" == "null" ]]; then
+            echo "::error::未找到 sing-box 发布版本"
+            exit 1
+          fi
+          mkdir -p build/sing-box && cd build/sing-box
+          gh release download "$TAG" --repo SagerNet/sing-box \
+            --pattern "sing-box-*-darwin-arm64.tar.gz"
+          ARCHIVE="$(ls sing-box-*-darwin-arm64.tar.gz)"
+          tar -xzf "$ARCHIVE"
+          BIN="$(find . -maxdepth 2 -type f -name sing-box | head -n 1)"
+          mv "$BIN" arm64
+          chmod +x arm64
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
       # dmgbuild 直接写入 .DS_Store 来设置窗口样式，不依赖 Finder 脚本，在 CI 中更稳定
       - name: Create DMG
         run: |
@@ -118,14 +142,16 @@ jobs:
             dmgbuild -s dmg/settings.py -D app="$1" -D background=build/dmg/background.tiff ClashLite "$2"
           }
 
-          # 只打包 Apple 芯片 + 内置 alpha 内核；首次启动时复制到内核目录，改动了包内容，需重新签名
+          # 只打包 Apple 芯片 + 内置 mihomo alpha 与 sing-box alpha 内核；首次启动时复制到内核目录，改动了包内容，需重新签名
           BUNDLED="$(mktemp -d)/ClashLite.app"
           cp -R "$APP" "$BUNDLED"
           cp "build/mihomo/arm64" "$BUNDLED/Contents/Resources/mihomo"
+          cp "build/sing-box/arm64" "$BUNDLED/Contents/Resources/sing-box"
           codesign --force --sign - "$BUNDLED/Contents/Resources/mihomo"
+          codesign --force --sign - "$BUNDLED/Contents/Resources/sing-box"
           codesign --force --sign - --options runtime --preserve-metadata=entitlements "$BUNDLED"
           codesign --verify --strict --verbose=2 "$BUNDLED"
-          make_dmg "$BUNDLED" "ClashLite-$VERSION-mihomo-${{ steps.mihomo.outputs.version }}-arm64.dmg"
+          make_dmg "$BUNDLED" "ClashLite-$VERSION-arm64.dmg"
 
       - uses: actions/upload-artifact@v7.0.2
         with:
@@ -166,14 +192,15 @@ jobs:
       - name: Compose release body
         env:
           MIHOMO: ${{ needs.build.outputs.mihomo }}
+          SING_BOX: ${{ needs.build.outputs.sing_box }}
           BASE: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ env.TAG }}
         run: |
           cat > body.md <<EOF
           ## 下载
 
-          **内置 mihomo $MIHOMO，下载即用（推荐）**
+          **内置 mihomo $MIHOMO 与 sing-box $SING_BOX，下载即用（推荐）**
 
-          - Apple 芯片（M 系列）：[ClashLite-$VERSION-mihomo-$MIHOMO-arm64.dmg]($BASE/ClashLite-$VERSION-mihomo-$MIHOMO-arm64.dmg)
+          - Apple 芯片（M 系列）：[ClashLite-$VERSION-arm64.dmg]($BASE/ClashLite-$VERSION-arm64.dmg)
 
           > 需要 macOS 15 或更高版本，仅支持 Apple 芯片。
           EOF

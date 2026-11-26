@@ -43,137 +43,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct ClashLiteApp: App {
     @NSApplicationDelegateAdaptor private var appDelegate: AppDelegate
-    @State private var coreVersion = CoreVersionMonitor()
-    @State private var launchAtLogin = LaunchAtLogin()
+    @Environment(\.openWindow) private var openWindow
+
+    @State private var coreVersion: CoreVersionMonitor
+    @State private var launchAtLogin: LaunchAtLogin
     @State private var profileStore: ProfileStore
     @State private var wiFiAutoSwitch: WiFiAutoSwitch
     @State private var core: CoreManager
+    @State private var windowOpener: WindowOpener
+    @State private var menuController: CascadingMenuController
 
     init() {
         CoreDirectory.installBundledIfNeeded()
-        let profileStore = ProfileStore()
+        let activeCore = CoreManager.loadStoredCoreType()
+        let coreVersion = CoreVersionMonitor()
+        let launchAtLogin = LaunchAtLogin()
+        let profileStore = ProfileStore(coreType: activeCore)
         // 先按当前 Wi-Fi 选好配置、TUN 和代理模式，内核直接以它们启动
         let wiFiAutoSwitch = WiFiAutoSwitch(profileStore: profileStore)
-        let core = CoreManager(profileStore: profileStore)
+        let core = CoreManager(profileStore: profileStore, wiFiAutoSwitch: wiFiAutoSwitch)
         wiFiAutoSwitch.attach(core)
         // 手动或自动更新正在使用的订阅后，重新加载内核
-        profileStore.onUpdate = { [weak profileStore, weak core] name in
-            if profileStore?.selectedName == name {
+        profileStore.onUpdate = { [weak profileStore, weak core] coreType, name in
+            if core?.activeCore == coreType, profileStore?.selectedName == name {
                 core?.reload()
             }
         }
-        profileStore.onRename = { [weak wiFiAutoSwitch] oldName, newName in
-            wiFiAutoSwitch?.renameProfile(from: oldName, to: newName)
+        profileStore.onRename = { [weak wiFiAutoSwitch] coreType, oldName, newName in
+            wiFiAutoSwitch?.renameProfile(for: coreType, from: oldName, to: newName)
         }
+
+        let windowOpener = WindowOpener()
+        let menuController = CascadingMenuController(
+            core: core,
+            profileStore: profileStore,
+            coreVersion: coreVersion,
+            wiFiAutoSwitch: wiFiAutoSwitch,
+            launchAtLogin: launchAtLogin,
+            windowOpener: windowOpener
+        )
+
+        _coreVersion = State(initialValue: coreVersion)
+        _launchAtLogin = State(initialValue: launchAtLogin)
         _profileStore = State(initialValue: profileStore)
         _wiFiAutoSwitch = State(initialValue: wiFiAutoSwitch)
         _core = State(initialValue: core)
+        _windowOpener = State(initialValue: windowOpener)
+        _menuController = State(initialValue: menuController)
     }
 
     var body: some Scene {
-        MenuBarExtra {
-            Text("Core: \(core.status.title)")
-
-            Button("Open Dashboard") {
-                core.openPanel()
-            }
-            .disabled(core.status != .running || core.isUpdatingPanel)
-
-            Button(core.isUpdatingPanel ? "Downloading Dashboard…" : "Update Dashboard") {
-                core.updatePanel()
-            }
-            .disabled(core.status != .running || core.isUpdatingPanel)
-
-            Toggle("TUN Mode", isOn: Binding(get: { core.isTunEnabled }, set: { core.setTunEnabled($0) }))
-
-            Toggle("System Proxy", isOn: Binding(
-                get: { core.isSystemProxyEnabled },
-                set: { core.setSystemProxyEnabled($0) }
-            ))
-
-            Divider()
-
-            ProfileMenu(profileStore: profileStore, core: core, wiFiAutoSwitch: wiFiAutoSwitch)
-
-            Picker("Mode: \(core.mode.title)", selection: $core.mode) {
-                ForEach(ProxyMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
-                }
-            }
-
-            Menu("Proxy Groups") {
-                ForEach(core.proxyGroups) { group in
-                    Menu(group.name) {
-                        if group.fixed != nil {
-                            Button("Unpin") {
-                                core.unfixProxy(in: group.name)
-                            }
-
-                            Divider()
-                        }
-
-                        // 用 Toggle 而非 Picker，菜单项才能带 badge
-                        ForEach(group.members) { member in
-                            Toggle(member.name, isOn: Binding(
-                                get: { group.now == member.name },
-                                set: { isOn in
-                                    if isOn { core.selectProxy(member.name, in: group.name) }
-                                }
-                            ))
-                            .badge(member.delayText)
-                        }
-                        .disabled(!group.isSelectable)
-                    }
-                    // 菜单中的 badge 对应 NSMenuItem.badge，显示在右侧且颜色较淡
-                    .badge(group.now)
-                }
-            }
-            .disabled(core.proxyGroups.isEmpty)
-
-            Divider()
-
-            Menu("More") {
-                Text("App Version")
-                    .badge(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
-
-                Text("Core Version")
-                    .badge(coreVersion.version)
-
-                Divider()
-
-                Button("Restart Core") {
-                    core.restart()
-                }
-                .disabled(profileStore.selected == nil)
-
-                Button("Close All Connections") {
-                    core.closeAllConnections()
-                }
-                .disabled(core.status != .running)
-
-                Divider()
-
-                CoreLogButton()
-
-                Button("Open Core Folder") {
-                    CoreDirectory.open()
-                }
-
-                Button("Open Profiles Folder") {
-                    ProfileDirectory.open(selecting: profileStore.selected?.fileURL)
-                }
-            }
-
-            Toggle("Launch at Login", isOn: Binding(get: { launchAtLogin.isEnabled }, set: { launchAtLogin.setEnabled($0) }))
-
-            Button("Quit ClashLite") {
-                NSApplication.shared.terminate(nil)
-            }
-            .keyboardShortcut("q")
-        } label: {
-            Image(core.isTunEnabled ? .menuBarIconTun : .menuBarIcon)
-                .accessibilityLabel(Text(verbatim: "ClashLite"))
-        }
+        let _ = windowOpener.bind(openWindow)
 
         Window("Add Profile", id: AddProfileView.windowID) {
             AddProfileView()
@@ -222,6 +142,7 @@ struct ClashLiteApp: App {
 
         Window("Core Log", id: CoreLogView.windowID) {
             CoreLogView()
+                .environment(core)
         }
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)

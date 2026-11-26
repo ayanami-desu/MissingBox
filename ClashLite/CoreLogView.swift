@@ -7,12 +7,13 @@
 
 import SwiftUI
 
-/// 实时查看内核输出，窗口打开期间持续追加新内容
+/// 实时查看当前内核输出，窗口打开期间持续追加新内容
 struct CoreLogView: View {
     static let windowID = "core-log"
 
+    @Environment(CoreManager.self) private var core
     @Environment(\.dismiss) private var dismiss
-    @State private var tail = LogTail(url: CoreDirectory.logURL)
+    @State private var tail = LogTail(url: CoreType.mihomo.logURL)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -28,11 +29,12 @@ struct CoreLogView: View {
                 Spacer()
 
                 Button("Show in Finder") {
-                    CoreDirectory.createIfNeeded()
-                    if FileManager.default.fileExists(atPath: CoreDirectory.logURL.path) {
-                        NSWorkspace.shared.activateFileViewerSelecting([CoreDirectory.logURL])
+                    let activeCore = core.activeCore
+                    CoreDirectory.createIfNeeded(for: activeCore)
+                    if FileManager.default.fileExists(atPath: activeCore.logURL.path) {
+                        NSWorkspace.shared.activateFileViewerSelecting([activeCore.logURL])
                     } else {
-                        NSWorkspace.shared.open(CoreDirectory.homeURL)
+                        NSWorkspace.shared.open(activeCore.homeURL)
                     }
                 }
 
@@ -44,7 +46,13 @@ struct CoreLogView: View {
             .padding()
         }
         .navigationTitle("Core Log")
-        .onAppear { tail.start() }
+        .onAppear {
+            tail.setURL(core.activeCore.logURL)
+            tail.start()
+        }
+        .onChange(of: core.activeCore) {
+            tail.setURL(core.activeCore.logURL)
+        }
         .onDisappear { tail.stop() }
     }
 }
@@ -71,7 +79,7 @@ private final class LogTail {
     /// 内容被整体替换（而非追加）时递增，供视图区分追加与重建
     private(set) var generation = 0
 
-    @ObservationIgnored private let url: URL
+    @ObservationIgnored private var url: URL
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var fileNumber: UInt64?
     @ObservationIgnored private var offset: UInt64 = 0
@@ -80,6 +88,19 @@ private final class LogTail {
 
     init(url: URL) {
         self.url = url
+    }
+
+    func setURL(_ newURL: URL) {
+        guard newURL != url else { return }
+        url = newURL
+        fileNumber = nil
+        offset = 0
+        pending = Data()
+        text = ""
+        generation += 1
+        if timer != nil {
+            poll()
+        }
     }
 
     func start() {

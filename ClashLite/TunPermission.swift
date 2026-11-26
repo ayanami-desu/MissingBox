@@ -24,8 +24,8 @@ enum TunPermissionError: LocalizedError {
 /// 参考 ClashBar：创建虚拟网卡需要 root，将内核设为 root 所有并加上 setuid 位，
 /// 之后内核总以 root 运行；只需授权一次，替换内核文件后需重新授权
 enum TunPermission {
-    static var isGranted: Bool {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: CoreDirectory.binaryURL.path) else {
+    static func isGranted(for coreType: CoreType) -> Bool {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: coreType.binaryURL.path) else {
             return false
         }
         let owner = (attributes[.ownerAccountID] as? NSNumber)?.intValue
@@ -34,9 +34,9 @@ enum TunPermission {
     }
 
     /// 弹出系统的管理员授权对话框
-    static func grant() async throws {
-        try await runAsAdministrator(command(for: CoreDirectory.binaryURL.path))
-        guard isGranted else { throw TunPermissionError.verificationFailed }
+    static func grant(for coreType: CoreType) async throws {
+        try await runAsAdministrator(command(for: coreType.binaryURL.path))
+        guard isGranted(for: coreType) else { throw TunPermissionError.verificationFailed }
     }
 
     private nonisolated static func command(for path: String) -> String {
