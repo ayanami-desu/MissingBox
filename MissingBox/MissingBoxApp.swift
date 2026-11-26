@@ -22,9 +22,13 @@ nonisolated enum ProxyMode: String, CaseIterable, Identifiable, Codable {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// 应用内主动重启时跳过退出确认弹窗
+    static var isRestarting = false
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // 注销、关机等由系统发出的退出请求不弹窗，避免阻塞
-        if NSAppleEventManager.shared().currentAppleEvent?.eventID == kAEQuitApplication {
+        // 注销、关机等由系统发出的退出请求或主动重启不弹窗，避免阻塞
+        if Self.isRestarting
+            || NSAppleEventManager.shared().currentAppleEvent?.eventID == kAEQuitApplication {
             return .terminateNow
         }
 
@@ -35,6 +39,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: String(localized: "Quit"))
         alert.addButton(withTitle: String(localized: "Cancel"))
         return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+    }
+
+    /// 先停止内核并恢复系统代理，待当前进程退出后再重新打开应用
+    static func relaunch(stopping core: CoreManager) {
+        guard !isRestarting else { return }
+        isRestarting = true
+
+        Task {
+            await core.stopForExit()
+
+            let pid = ProcessInfo.processInfo.processIdentifier
+            let bundlePath = Bundle.main.bundleURL.path
+            let process = Process()
+            process.executableURL = URL(filePath: "/bin/sh")
+            process.arguments = [
+                "-c",
+                "while kill -0 \"$1\" 2>/dev/null; do sleep 0.05; done; open \"$2\"",
+                "sh",
+                "\(pid)",
+                bundlePath
+            ]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+
+            do {
+                try process.run()
+                NSApplication.shared.terminate(nil)
+            } catch {
+                isRestarting = false
+                NSLog("重启应用失败：\(error)")
+                Notifier.post(id: "relaunch", title: "Failed to Restart App", body: error.localizedDescription)
+            }
+        }
     }
 }
 

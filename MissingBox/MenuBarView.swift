@@ -266,6 +266,16 @@ struct MenuLevelView: View {
 
             MenuDivider()
 
+            // 重启应用
+            MenuActionRow(
+                title: "Restart App",
+                systemImage: "arrow.clockwise",
+                onHoverEnter: { coordinator.hoverPlainRow(atLevel: level) }
+            ) {
+                coordinator.closeAll()
+                AppDelegate.relaunch(stopping: core)
+            }
+
             // 退出
             MenuActionRow(
                 title: "Quit MissingBox",

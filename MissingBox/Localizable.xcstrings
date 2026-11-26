@@ -577,6 +577,16 @@
         }
       }
     },
+    "Failed to Restart App" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重启应用失败"
+          }
+        }
+      }
+    },
     "Failed to Restore System Proxy" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1263,6 +1273,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "必填，同时作为配置文件名"
+          }
+        }
+      }
+    },
+    "Restart App" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重启应用"
           }
         }
       }

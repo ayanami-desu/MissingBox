@@ -266,6 +266,11 @@ final class CoreManager {
         enqueue { await self.start() }
     }
 
+    /// 退出或重启应用前串行停止当前内核并恢复系统代理
+    func stopForExit() async {
+        await enqueue { await self.stop() }.value
+    }
+
     /// 切换策略组选中的节点，先更新菜单再同步给内核
     func selectProxy(_ name: String, in group: String) {
         guard let index = proxyGroups.firstIndex(where: { $0.name == group }) else { return }
