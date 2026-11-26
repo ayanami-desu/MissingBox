@@ -1,11 +1,11 @@
-# ClashLite 代码库指令
+# MissingBox 代码库指令
 
-作用域：整个仓库。源码全部在 `ClashLite/`（扁平结构）；其余是工程文件、`dmg/` 构建脚本与 `README.md`。
+作用域：整个仓库。源码全部在 `MissingBox/`（扁平结构）；其余是工程文件、`dmg/` 构建脚本与 `README.md`。
 
 ## 产品边界
 
 - 这是 macOS 菜单栏 mihomo 客户端，不是面板：连接、规则、测速交给内核托管的 metacubexd 面板，**不要在应用内重建这些界面**。应用内的 `CoreLogView` 只 tail `Home/mihomo.log`，不要扩建成面板。
-- 无主窗口（`INFOPLIST_KEY_LSUIElement`）：界面只有 `ClashLiteApp.body` 的 `MenuBarExtra` 与独立 `Window`/`WindowGroup`。
+- 无主窗口（`INFOPLIST_KEY_LSUIElement`）：界面只有 `MissingBoxApp.body` 的 `MenuBarExtra` 与独立 `Window`/`WindowGroup`。
 - 仅支持 macOS 15+ / arm64；`ENABLE_APP_SANDBOX = NO`、`ENABLE_HARDENED_RUNTIME = YES`，改动权限相关代码时以该组合为前提。
 
 ## 构建与验证
@@ -14,17 +14,17 @@
 - 构建需要 Xcode 27（工程 `objectVersion = 110`），CI 使用 `xcode-27` 镜像：
 
   ```sh
-  xcodebuild -project ClashLite.xcodeproj -scheme ClashLite -configuration Release \
+  xcodebuild -project MissingBox.xcodeproj -scheme MissingBox -configuration Release \
     -destination "generic/platform=macOS" ARCHS=arm64 build
   ```
 
 - 唯一依赖是 Yams（SPM，`Package.resolved` 已提交）；YAML 一律走 `CoreConfig`/`ConfigOverride` 中的 Yams `Node` API，不要引入第二个 YAML 库或改用字符串拼接。
-- `ClashLite/` 是 `PBXFileSystemSynchronizedRootGroup`：新增/删除源文件放进该目录即参与编译，**不要手改 `project.pbxproj` 添加文件引用**，只在改构建设置时才动工程文件。
+- `MissingBox/` 是 `PBXFileSystemSynchronizedRootGroup`：新增/删除源文件放进该目录即参与编译，**不要手改 `project.pbxproj` 添加文件引用**，只在改构建设置时才动工程文件。
 - 资源与颜色用 Xcode 生成的符号（`Image(.menuBarIconTun)`），不要用字符串名。
 
 ## 配置生成管线（核心不变量）
 
-- 最终配置 = 配置文件 → 配置覆写 → 全局覆写 → 应用设置（mode、external-controller、secret、external-ui、TUN），实现在 `ClashLite/CoreConfig.swift` 的 `render(profileURL:)`；覆写路径与深度合并语义（映射递归、`+key` 前置 / `key+` 后置）在 `ClashLite/ConfigOverride.swift`。改动任一层都要同步 `ClashLite/ConfigValidator.swift` 的对应检查层。
+- 最终配置 = 配置文件 → 配置覆写 → 全局覆写 → 应用设置（mode、external-controller、secret、external-ui、TUN），实现在 `MissingBox/CoreConfig.swift` 的 `render(profileURL:)`；覆写路径与深度合并语义（映射递归、`+key` 前置 / `key+` 后置）在 `MissingBox/ConfigOverride.swift`。改动任一层都要同步 `MissingBox/ConfigValidator.swift` 的对应检查层。
 - 导入、编辑、更新配置或保存配置覆写时，必须经 `ConfigValidator` 用内核 `mihomo -t` 校验对应层；全局覆写保存目前只校验 YAML 格式（见 `ConfigOverrideView.save`）。
 - 应用设置阶段，`CoreConfig.applyTun` 只在 `dns.enhanced-mode` 缺失或为 `fake-ip` 时补 DNS 设置；配置显式使用其他模式时不要覆盖。
 - 配置以 `CLASH_CONFIG_STRING`（base64 环境变量）传给内核，**不得**把配置内容、secret 或节点信息放进 `process.arguments`（避免出现在进程参数中）。
@@ -44,13 +44,13 @@
 
 ## 代码约定
 
-- 窗口在 `ClashLiteApp.body` 中声明并带 `id`，由 `openWindow(id:)` 打开；新增窗口沿用 `.defaultLaunchBehavior(.suppressed)` 与 `.restorationBehavior(.disabled)`，打开后调用 `NSApplication.shared.activate()`，否则菜单栏应用不在前台、窗口拿不到焦点。
+- 窗口在 `MissingBoxApp.body` 中声明并带 `id`，由 `openWindow(id:)` 打开；新增窗口沿用 `.defaultLaunchBehavior(.suppressed)` 与 `.restorationBehavior(.disabled)`，打开后调用 `NSApplication.shared.activate()`，否则菜单栏应用不在前台、窗口拿不到焦点。
 - 需要用户感知的失败用 `Notifier.post(id:title:body:)` 发系统通知，同时 `NSLog` 记录细节；不要只弹窗或静默失败。
 - 配置列表以数据目录中的 `Profiles/`（`ProfileDirectory.url`）为准；同目录的 `profiles.json` 只存订阅等附加信息，新增配置读取入口时遵循这一点。
 
 ## 本地化与注释
 
-- 界面文案走字符串目录 `ClashLite/Localizable.xcstrings` 与 `ClashLite/InfoPlist.xcstrings`：键为英文原文（`sourceLanguage = en`），只维护 `zh-Hans` 翻译，应用固定显示简体中文，不要新增其他语言。
+- 界面文案走字符串目录 `MissingBox/Localizable.xcstrings` 与 `MissingBox/InfoPlist.xcstrings`：键为英文原文（`sourceLanguage = en`），只维护 `zh-Hans` 翻译，应用固定显示简体中文，不要新增其他语言。
 - 源码注释与提交信息用简体中文。
 
 ## Git 与发布

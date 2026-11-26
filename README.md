@@ -1,4 +1,4 @@
-# ClashLite
+# MissingBox
 
 一个极简的 macOS 菜单栏 [mihomo](https://github.com/MetaCubeX/mihomo) / [sing-box](https://github.com/SagerNet/sing-box) 客户端。
 
@@ -6,9 +6,9 @@
 
 mihomo 与 sing-box 内核本身就能托管 Web 面板（mihomo 的 `external-ui` / [metacubexd](https://github.com/MetaCubeX/metacubexd)，sing-box v1.14+ 原生 `api` 服务托管的 [sing-box-dashboard](https://github.com/SagerNet/sing-box-dashboard)），把节点、连接、规则、测速都已经做得很好了。可现在的客户端大多还要自己再造一个面板，功能重复，体积和复杂度也跟着上去了——内核：我自己有面板啊？
 
-ClashLite 的想法很简单：**只做内核做不了的事，其余的交给内核和它自带的面板。**
+MissingBox 的想法很简单：**只做内核做不了的事，其余的交给内核和它自带的面板。**
 
-- 管理内核进程、切换内核、配置文件、订阅更新、覆写、TUN 授权这类「客户端」的活，由 ClashLite 负责
+- 管理内核进程、切换内核、配置文件、订阅更新、覆写、TUN 授权这类「客户端」的活，由 MissingBox 负责
 - 查看连接、规则、测速这类「面板」的活，一键打开内核托管的面板即可；内核日志另有轻量查看窗口
 - 日常最常用的操作（切换模式、切换节点、开关网卡代理）放在菜单栏里，不用打开面板
 
@@ -37,23 +37,23 @@ ClashLite 的想法很简单：**只做内核做不了的事，其余的交给�
 
 ## 安装
 
-1. 在 [Releases](../../releases) 下载最新版本，将 ClashLite 拖入「应用程序」。每个版本只提供一个 DMG：
+1. 在 [Releases](../../releases) 下载最新版本，将 MissingBox 拖入「应用程序」。每个版本只提供一个 DMG：
 
    | 文件 | 说明 |
    | --- | --- |
-   | `ClashLite-x.y.z-arm64.dmg` | 内置 mihomo alpha 与 sing-box alpha 内核，适用于 Apple 芯片 |
+   | `MissingBox-x.y.z-arm64.dmg` | 内置 mihomo alpha 与 sing-box alpha 内核，适用于 Apple 芯片 |
 
 2. 应用未经公证，首次打开前需要移除隔离属性：
 
    ```sh
-   xattr -cr /Applications/ClashLite.app
+   xattr -cr /Applications/MissingBox.app
    ```
 
    或者首次打开被拦截后，在「系统设置 → 隐私与安全性」中点击「仍要打开」。
 
 ### 内核
 
-DMG 内置的 mihomo alpha 与 sing-box alpha 内核在首次启动时会被复制到内核目录，无需其他操作。内核目录中已有对应文件时不会覆盖，所以之后更新 ClashLite 不会替换你自己的内核；想换成新版附带的内核，删掉内核目录中的 `mihomo` 或 `sing-box` 再重新打开 ClashLite 即可。
+DMG 内置的 mihomo alpha 与 sing-box alpha 内核在首次启动时会被复制到内核目录，无需其他操作。内核目录中已有对应文件时不会覆盖，所以之后更新 MissingBox 不会替换你自己的内核；想换成新版附带的内核，删掉内核目录中的 `mihomo` 或 `sing-box` 再重新打开 MissingBox 即可。
 
 想自己选择内核版本时，按以下步骤放入：
 
@@ -62,7 +62,7 @@ DMG 内置的 mihomo alpha 与 sing-box alpha 内核在首次启动时会被复�
 3. 赋予执行权限并移除隔离属性：
 
    ```sh
-   cd ~/Library/Application\ Support/com.oxi.ClashLite/Core
+   cd ~/Library/Application\ Support/com.ayanami.MissingBox/Core
    chmod +x mihomo sing-box
    xattr -d com.apple.quarantine mihomo sing-box
    ```
@@ -78,7 +78,7 @@ DMG 内置的 mihomo alpha 与 sing-box alpha 内核在首次启动时会被复�
 覆写内容在 mihomo 下为 YAML 映射、在 sing-box 下为标准 JSON 对象，会按以下顺序合并到配置上：
 
 ```
-配置文件 → 配置覆写 → 全局覆写 → ClashLite 的设置（模式、TUN、控制接口等）
+配置文件 → 配置覆写 → 全局覆写 → MissingBox 的设置（模式、TUN、控制接口等）
 ```
 
 合并规则（YAML 与 JSON 一致）：
@@ -107,11 +107,11 @@ DMG 内置的 mihomo alpha 与 sing-box alpha 内核在首次启动时会被复�
 
 ### 网卡代理
 
-创建虚拟网卡需要 root 权限。首次开启时，ClashLite 会弹出系统的管理员授权对话框，把当前内核文件设为 root 所有并加上 setuid 位，之后不再需要授权。替换内核文件或首次为另一内核开启网卡代理时会再次请求授权。
+创建虚拟网卡需要 root 权限。首次开启时，MissingBox 会弹出系统的管理员授权对话框，把当前内核文件设为 root 所有并加上 setuid 位，之后不再需要授权。替换内核文件或首次为另一内核开启网卡代理时会再次请求授权。
 
 ### 文件位置
 
-所有数据都在 `~/Library/Application Support/com.oxi.ClashLite/` 中：
+所有数据都在 `~/Library/Application Support/com.ayanami.MissingBox/` 中：
 
 | 路径 | 说明 |
 | --- | --- |
@@ -134,15 +134,15 @@ DMG 内置的 mihomo alpha 与 sing-box alpha 内核在首次启动时会被复�
 
 ```sh
 git clone <仓库地址>
-cd ClashLite
-open ClashLite.xcodeproj
+cd MissingBox
+open MissingBox.xcodeproj
 ```
 
 依赖（[Yams](https://github.com/jpsim/Yams)）通过 Swift Package Manager 自动拉取。
 
 ### 本地化
 
-界面文本位于字符串目录 `ClashLite/Localizable.xcstrings` 与 `ClashLite/InfoPlist.xcstrings`，键名沿用英语，目前只提供简体中文翻译，应用固定使用简体中文界面。
+界面文本位于字符串目录 `MissingBox/Localizable.xcstrings` 与 `MissingBox/InfoPlist.xcstrings`，键名沿用英语，目前只提供简体中文翻译，应用固定使用简体中文界面。
 
 ### 发布
 

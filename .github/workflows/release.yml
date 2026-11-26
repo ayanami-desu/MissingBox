@@ -72,8 +72,8 @@ jobs:
       - name: Build
         run: |
           xcodebuild \
-            -project ClashLite.xcodeproj \
-            -scheme ClashLite \
+            -project MissingBox.xcodeproj \
+            -scheme MissingBox \
             -configuration Release \
             -derivedDataPath build/DerivedData \
             -destination "generic/platform=macOS" \
@@ -130,8 +130,8 @@ jobs:
       # dmgbuild 直接写入 .DS_Store 来设置窗口样式，不依赖 Finder 脚本，在 CI 中更稳定
       - name: Create DMG
         run: |
-          APP="build/DerivedData/Build/Products/Release/ClashLite.app"
-          lipo "$APP/Contents/MacOS/ClashLite" -verify_arch arm64
+          APP="build/DerivedData/Build/Products/Release/MissingBox.app"
+          lipo "$APP/Contents/MacOS/MissingBox" -verify_arch arm64
 
           pipx install dmgbuild
           mkdir -p build/dmg
@@ -139,11 +139,11 @@ jobs:
           tiffutil -cathidpicheck build/dmg/background.png build/dmg/background@2x.png -out build/dmg/background.tiff
 
           make_dmg() {
-            dmgbuild -s dmg/settings.py -D app="$1" -D background=build/dmg/background.tiff ClashLite "$2"
+            dmgbuild -s dmg/settings.py -D app="$1" -D background=build/dmg/background.tiff MissingBox "$2"
           }
 
           # 只打包 Apple 芯片 + 内置 mihomo alpha 与 sing-box alpha 内核；首次启动时复制到内核目录，改动了包内容，需重新签名
-          BUNDLED="$(mktemp -d)/ClashLite.app"
+          BUNDLED="$(mktemp -d)/MissingBox.app"
           cp -R "$APP" "$BUNDLED"
           cp "build/mihomo/arm64" "$BUNDLED/Contents/Resources/mihomo"
           cp "build/sing-box/arm64" "$BUNDLED/Contents/Resources/sing-box"
@@ -151,11 +151,11 @@ jobs:
           codesign --force --sign - "$BUNDLED/Contents/Resources/sing-box"
           codesign --force --sign - --options runtime --preserve-metadata=entitlements "$BUNDLED"
           codesign --verify --strict --verbose=2 "$BUNDLED"
-          make_dmg "$BUNDLED" "ClashLite-$VERSION-arm64.dmg"
+          make_dmg "$BUNDLED" "MissingBox-$VERSION-arm64.dmg"
 
       - uses: actions/upload-artifact@v7.0.2
         with:
-          name: ClashLite-${{ needs.prepare.outputs.version }}
+          name: MissingBox-${{ needs.prepare.outputs.version }}
           path: "*.dmg"
           archive: false
           retention-days: 1
@@ -176,7 +176,7 @@ jobs:
       # 构建的就是这个提交（版本号已通过参数覆盖），若期间 main 有新提交则推送失败，不会发布
       - name: Commit version and tag
         run: |
-          sed -i "s/MARKETING_VERSION = [^;]*;/MARKETING_VERSION = $VERSION;/" ClashLite.xcodeproj/project.pbxproj
+          sed -i "s/MARKETING_VERSION = [^;]*;/MARKETING_VERSION = $VERSION;/" MissingBox.xcodeproj/project.pbxproj
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if ! git diff --quiet; then
@@ -187,7 +187,7 @@ jobs:
 
       - uses: actions/download-artifact@v8.0.2
         with:
-          name: ClashLite-${{ needs.prepare.outputs.version }}
+          name: MissingBox-${{ needs.prepare.outputs.version }}
 
       - name: Compose release body
         env:
@@ -200,7 +200,7 @@ jobs:
 
           **内置 mihomo $MIHOMO 与 sing-box $SING_BOX，下载即用（推荐）**
 
-          - Apple 芯片（M 系列）：[ClashLite-$VERSION-arm64.dmg]($BASE/ClashLite-$VERSION-arm64.dmg)
+          - Apple 芯片（M 系列）：[MissingBox-$VERSION-arm64.dmg]($BASE/MissingBox-$VERSION-arm64.dmg)
 
           > 需要 macOS 15 或更高版本，仅支持 Apple 芯片。
           EOF

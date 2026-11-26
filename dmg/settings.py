@@ -1,4 +1,4 @@
-# dmgbuild 配置：dmgbuild -s settings.py -D app=<ClashLite.app> -D background=<background.tiff> ClashLite <输出.dmg>
+# dmgbuild 配置：dmgbuild -s settings.py -D app=<MissingBox.app> -D background=<background.tiff> MissingBox <输出.dmg>
 # 窗口尺寸与图标位置需与 background.swift 保持一致
 
 import os.path

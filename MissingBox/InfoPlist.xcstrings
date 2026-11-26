@@ -1,0 +1,39 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "NSLocationAlwaysAndWhenInUseUsageDescription" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MissingBox 仅使用定位服务读取 Wi-Fi 名称，以便按网络自动切换设置，不会使用你的位置。"
+          }
+        }
+      }
+    },
+    "NSLocationUsageDescription" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MissingBox 仅使用定位服务读取 Wi-Fi 名称，以便按网络自动切换设置，不会使用你的位置。"
+          }
+        }
+      }
+    },
+    "NSLocationWhenInUseUsageDescription" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MissingBox 仅使用定位服务读取 Wi-Fi 名称，以便按网络自动切换设置，不会使用你的位置。"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}
