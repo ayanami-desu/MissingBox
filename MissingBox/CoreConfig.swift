@@ -43,6 +43,8 @@ nonisolated struct CoreConfig {
         var proxyPorts: ProxyPorts?
         /// sing-box 官方面板下载地址
         var dashboardDownloadURL: String?
+        /// 内核自行配置系统 DNS（tun.dns-mode 非 disabled）
+        var kernelResolvesDNS: Bool = false
     }
 
     func render(profileURL: URL) throws -> Rendered {
@@ -83,7 +85,17 @@ nonisolated struct CoreConfig {
         applyTun(to: &root)
 
         let uiName = root["external-ui-name"]?.string.flatMap { $0.isEmpty ? nil : $0 }
-        return Rendered(payload: try Self.serialize(root), uiName: uiName)
+        return Rendered(
+            payload: try Self.serialize(root),
+            uiName: uiName,
+            kernelResolvesDNS: Self.kernelResolvesDNS(in: root)
+        )
+    }
+
+    /// 与 mihomo 一致：tun.dns-mode 为空或 disabled 时不接管系统 DNS，其余非 disabled 值由内核自行配置
+    private static func kernelResolvesDNS(in root: Node.Mapping) -> Bool {
+        guard let mode = root["tun"]?.mapping?["dns-mode"]?.string else { return false }
+        return !mode.isEmpty && mode != "disabled"
     }
 
     /// 配置须为 YAML 映射

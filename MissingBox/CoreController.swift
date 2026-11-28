@@ -97,14 +97,14 @@ nonisolated struct CoreController {
             throw CoreControllerError.invalidDashboardURL
         }
 
-        let zipData = try await Self.fetchArchive(from: url, proxyPorts: proxyPorts)
+        var request = URLRequest(url: url, timeoutInterval: 120)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        let zipData = try await Self.fetchData(for: request, proxyPorts: proxyPorts)
         try Self.extractArchive(zipData, to: destination)
     }
 
-    private static func fetchArchive(from url: URL, proxyPorts: ProxyPorts?) async throws -> Data {
-        var request = URLRequest(url: url, timeoutInterval: 120)
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-
+    /// 优先通过运行中的本地代理请求数据，失败时回退直连
+    static func fetchData(for request: URLRequest, proxyPorts: ProxyPorts?) async throws -> Data {
         if let proxyDictionary = Self.proxyDictionary(for: proxyPorts) {
             let configuration = URLSessionConfiguration.ephemeral
             configuration.connectionProxyDictionary = proxyDictionary

@@ -96,6 +96,7 @@ nonisolated struct SingBoxConfig {
         try ConfigOverride.profile(.singBox, name).apply(to: &root)
         try ConfigOverride.global(.singBox).apply(to: &root)
 
+        applyClashModeRules(to: &root)
         applyClashAPI(to: &root)
         let dashboardDownloadURL = applyAPIService(to: &root)
         applyTun(to: &root)
@@ -117,9 +118,92 @@ nonisolated struct SingBoxConfig {
         var clashAPI = experimental["clash_api"] as? [String: Any] ?? [:]
         clashAPI["external_controller"] = controller.address
         clashAPI["secret"] = controller.secret
-        clashAPI["default_mode"] = resolvedDefaultMode(in: root)
+        clashAPI["default_mode"] = resolvedDefaultMode(for: .rule, in: root)
         experimental["clash_api"] = clashAPI
         root["experimental"] = experimental
+    }
+
+    /// sing-box 仅允许切换到在 route.rules / dns.rules / default_mode 中出现过的 clash_mode；
+    /// 若原配置未声明 direct 或 global 规则，则按出站配置自动补全，使菜单栏模式切换生效
+    private func applyClashModeRules(to root: inout [String: Any]) {
+        let outbounds = root["outbounds"] as? [[String: Any]] ?? []
+        var injected: [[String: Any]] = []
+
+        if !hasClashMode(ProxyMode.direct.rawValue, in: root),
+           let directTag = directOutboundTag(in: outbounds) {
+            injected.append([
+                "clash_mode": ProxyMode.direct.rawValue,
+                "outbound": directTag,
+            ])
+        }
+
+        if !hasClashMode(ProxyMode.global.rawValue, in: root),
+           let globalTag = globalOutboundTag(in: root, outbounds: outbounds) {
+            injected.append([
+                "clash_mode": ProxyMode.global.rawValue,
+                "outbound": globalTag,
+            ])
+        }
+
+        guard !injected.isEmpty else { return }
+
+        var route = root["route"] as? [String: Any] ?? [:]
+        var rules = route["rules"] as? [Any] ?? []
+        let insertionIndex = rules.lastIndex { isPreModeRule($0) }.map { $0 + 1 } ?? 0
+        rules.insert(contentsOf: injected, at: insertionIndex)
+        route["rules"] = rules
+        root["route"] = route
+    }
+
+    private func hasClashMode(_ target: String, in root: [String: Any]) -> Bool {
+        let routeRules = (root["route"] as? [String: Any])?["rules"] as? [Any] ?? []
+        return findClashMode(matching: target, in: routeRules) != nil
+    }
+
+    private func directOutboundTag(in outbounds: [[String: Any]]) -> String? {
+        if let direct = outbounds.first(where: { ($0["type"] as? String) == "direct" }),
+           let tag = direct["tag"] as? String, !tag.isEmpty {
+            return tag
+        }
+        return outbounds.first { ($0["tag"] as? String) == "direct" }?["tag"] as? String
+    }
+
+    private func globalOutboundTag(in root: [String: Any], outbounds: [[String: Any]]) -> String? {
+        if let global = outbounds.first(where: { ($0["tag"] as? String) == "GLOBAL" }),
+           let tag = global["tag"] as? String {
+            return tag
+        }
+        if let finalTag = (root["route"] as? [String: Any])?["final"] as? String, !finalTag.isEmpty {
+            let finalType = outbounds.first { ($0["tag"] as? String) == finalTag }?["type"] as? String
+            if finalType != "direct", finalType != "block", finalType != "reject" {
+                return finalTag
+            }
+        }
+        if let selector = outbounds.first(where: { ($0["type"] as? String) == "selector" }),
+           let tag = selector["tag"] as? String, !tag.isEmpty {
+            return tag
+        }
+        if let urltest = outbounds.first(where: { ($0["type"] as? String) == "urltest" }),
+           let tag = urltest["tag"] as? String, !tag.isEmpty {
+            return tag
+        }
+        return nil
+    }
+
+    /// DNS 劫持与协议探测须在 clash_mode 分流之前执行
+    private func isPreModeRule(_ item: Any) -> Bool {
+        guard let rule = item as? [String: Any] else { return false }
+        if let action = rule["action"] as? String,
+           ["hijack-dns", "sniff", "resolve"].contains(action) {
+            return true
+        }
+        if let proto = rule["protocol"] as? String, proto == "dns" {
+            return true
+        }
+        if let protos = rule["protocol"] as? [String], protos.contains("dns") {
+            return true
+        }
+        return false
     }
 
     /// 注入 sing-box 原生 API 服务（127.0.0.1:9098），托管官方 sing-box-dashboard；
@@ -304,8 +388,8 @@ nonisolated struct SingBoxConfig {
 
     /// 若路由或 DNS 规则中已用大小写形式声明了 clash_mode（如 "Rule"/"Global"/"Direct"），
     /// 沿用规则中的拼写，避免面板中出现大小写重复的模式项
-    private func resolvedDefaultMode(in root: [String: Any]) -> String {
-        let target = mode.rawValue
+    private func resolvedDefaultMode(for targetMode: ProxyMode, in root: [String: Any]) -> String {
+        let target = targetMode.rawValue
         let ruleSources: [[Any]] = [
             (root["route"] as? [String: Any])?["rules"] as? [Any] ?? [],
             (root["dns"] as? [String: Any])?["rules"] as? [Any] ?? [],

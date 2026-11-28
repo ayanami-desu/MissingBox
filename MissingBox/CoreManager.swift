@@ -35,6 +35,7 @@ final class CoreManager {
             if status != .running {
                 proxies = [:]
                 runtimeConfig = nil
+                kernelResolvesDNS = false
             }
         }
     }
@@ -64,24 +65,22 @@ final class CoreManager {
         }
     }
 
-    /// 应用内 IPv6 控制模式（自动 / 开启 / 关闭），通过 setIPv6Mode(_:) 修改
-    private(set) var ipv6Mode: IPv6Mode {
+    /// 是否启用 IPv6，通过 setIPv6Enabled(_:) 修改
+    private(set) var isIPv6Enabled: Bool {
         didSet {
-            UserDefaults.standard.set(ipv6Mode.rawValue, forKey: Self.ipv6ModeKey)
+            UserDefaults.standard.set(isIPv6Enabled, forKey: Self.ipv6Key)
         }
     }
 
-    /// 物理主网络接口当前是否具备公网 IPv6
-    private(set) var isSystemIPv6Available = false
-
-    /// 最终下发给内核的 IPv6 开关状态
-    var isIPv6Enabled: Bool {
-        switch ipv6Mode {
-        case .auto: isSystemIPv6Available
-        case .enabled: true
-        case .disabled: false
+    /// 是否在 TUN 开启时接管系统 DNS，通过 setSystemDNSEnabled(_:) 修改
+    private(set) var isSystemDNSEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(isSystemDNSEnabled, forKey: Self.systemDNSKey)
         }
     }
+
+    /// 内核通过 tun.dns-mode 自行配置了系统 DNS，应用不能再接管
+    private(set) var kernelResolvesDNS = false
 
     /// 内核正在使用的配置，即最近一次成功传入内核的内容
     private(set) var runtimeConfig: String?
@@ -93,6 +92,9 @@ final class CoreManager {
 
     /// 正在更新面板
     private(set) var isUpdatingPanel = false
+
+    /// 正在更新内核
+    private(set) var isUpdatingCore = false
 
     /// 内核托管的面板地址
     private var panelURL: URL { controller.panelURL(for: activeCore, uiName: uiName) }
@@ -117,8 +119,10 @@ final class CoreManager {
     /// 内核最近一次加载配置时的系统 DNS 服务器
     @ObservationIgnored private var loadedDNSServers: [String] = []
     @ObservationIgnored private var dnsChangeTask: Task<Void, Never>?
-    @ObservationIgnored private var ipv6Monitor: SystemIPv6Monitor?
-    @ObservationIgnored private var ipv6ChangeTask: Task<Void, Never>?
+    /// 已接管的系统 DNS；服务不变时不再重复读写
+    @ObservationIgnored private var appliedSystemDNS: SystemDNS.Applied?
+    /// 自己写入 DNS 后 monitor 读到的值，用于避免触发内核重载
+    @ObservationIgnored private var expectedDNSServers: [String]?
     /// 内核监听的代理端口，混合端口同时服务 HTTP 和 SOCKS
     @ObservationIgnored private var proxyPorts: ProxyPorts?
     /// 已写入系统代理的端口，端口不变时不再重复设置
@@ -128,7 +132,8 @@ final class CoreManager {
     @ObservationIgnored private static let modeKey = "proxyMode"
     @ObservationIgnored private static let tunKey = "tunEnabled"
     @ObservationIgnored private static let systemProxyKey = "systemProxyEnabled"
-    @ObservationIgnored private static let ipv6ModeKey = "ipv6Mode"
+    @ObservationIgnored private static let systemDNSKey = "systemDNSEnabled"
+    @ObservationIgnored private static let ipv6Key = "ipv6Enabled"
 
     private var config: CoreConfig {
         CoreConfig(
@@ -151,7 +156,13 @@ final class CoreManager {
         mode = UserDefaults.standard.string(forKey: Self.modeKey).flatMap(ProxyMode.init) ?? .rule
         isTunEnabled = UserDefaults.standard.bool(forKey: Self.tunKey)
         isSystemProxyEnabled = UserDefaults.standard.bool(forKey: Self.systemProxyKey)
-        ipv6Mode = UserDefaults.standard.string(forKey: Self.ipv6ModeKey).flatMap(IPv6Mode.init) ?? .auto
+        // 默认开启，老用户升级后也直接生效
+        isSystemDNSEnabled = UserDefaults.standard.object(forKey: Self.systemDNSKey) as? Bool ?? true
+        if UserDefaults.standard.object(forKey: Self.ipv6Key) != nil {
+            isIPv6Enabled = UserDefaults.standard.bool(forKey: Self.ipv6Key)
+        } else {
+            isIPv6Enabled = UserDefaults.standard.string(forKey: "ipv6Mode") == "enabled"
+        }
 
         Notifier.setUp()
 
@@ -164,6 +175,7 @@ final class CoreManager {
                 self?.process?.terminate()
                 // 异步恢复可能来不及执行，退出前同步完成
                 SystemProxy.restoreIfNeeded()
+                SystemDNS.restoreIfNeeded()
             }
         }
 
@@ -171,15 +183,14 @@ final class CoreManager {
             self?.systemDNSDidChange()
         }
 
-        let ipv6Monitor = SystemIPv6Monitor { [weak self] in
-            self?.systemIPv6DidChange()
-        }
-        self.ipv6Monitor = ipv6Monitor
-        isSystemIPv6Available = ipv6Monitor.isAvailable
-
         // 上次异常退出可能遗留了未恢复的系统代理
         if !isSystemProxyEnabled, SystemProxy.hasBackup {
             enqueue { await self.restoreSystemProxy() }
+        }
+
+        // 上次异常退出可能遗留了未恢复的系统 DNS
+        if SystemDNS.hasBackup {
+            enqueue { await self.restoreSystemDNS() }
         }
 
         observeSelection(of: profileStore)
@@ -225,21 +236,19 @@ final class CoreManager {
         select(profile)
     }
 
-    /// TUN 会影响入站或 DNS 覆写，需要以完整配置重新加载
+    /// TUN 会影响入站或 DNS 覆写，需要以完整配置重新加载；切换内核期间由 switchCore 统一启动
     func setTunEnabled(_ enabled: Bool) {
         guard enabled != isTunEnabled else { return }
         isTunEnabled = enabled
+        guard !isSwitchingCore else { return }
         scheduleApply()
     }
 
-    /// 切换 IPv6 模式；仅当实际生效的 IPv6 开关变化时重新渲染并加载配置
-    func setIPv6Mode(_ mode: IPv6Mode) {
-        guard mode != ipv6Mode else { return }
-        let wasEnabled = isIPv6Enabled
-        ipv6Mode = mode
-        if isIPv6Enabled != wasEnabled {
-            scheduleApply()
-        }
+    /// 切换 IPv6 开关，重新渲染并加载配置
+    func setIPv6Enabled(_ enabled: Bool) {
+        guard enabled != isIPv6Enabled else { return }
+        isIPv6Enabled = enabled
+        scheduleApply()
     }
 
     /// 打开时把系统代理指向内核端口，关闭时恢复原有设置；内核未运行时等启动后再应用
@@ -255,6 +264,19 @@ final class CoreManager {
         }
     }
 
+    /// TUN 开启时接管系统 DNS，关闭开关时立即恢复
+    func setSystemDNSEnabled(_ enabled: Bool) {
+        guard enabled != isSystemDNSEnabled else { return }
+        isSystemDNSEnabled = enabled
+        enqueue {
+            if enabled {
+                await self.syncSystemDNS()
+            } else {
+                await self.restoreSystemDNS()
+            }
+        }
+    }
+
     /// 重新生成配置并应用，例如修改覆写之后
     func reload() {
         guard profileURL != nil else { return }
@@ -264,6 +286,72 @@ final class CoreManager {
     /// 手动重启，例如放入内核文件之后
     func restart() {
         enqueue { await self.start() }
+    }
+
+    /// 从 GitHub Releases 检查并更新当前选中的内核，下载与校验期间保持现有内核运行
+    func updateCore(currentVersion: String?) {
+        guard !isUpdatingCore else { return }
+        isUpdatingCore = true
+        let targetCore = activeCore
+        let ports = proxyPorts
+
+        Task {
+            defer { isUpdatingCore = false }
+            let release: CoreUpdater.Release
+            let stagedURL: URL
+            do {
+                release = try await CoreUpdater.latestRelease(for: targetCore, proxyPorts: ports)
+                if currentVersion == release.version {
+                    Notifier.post(
+                        id: "coreUpdate",
+                        title: "Core Up to Date",
+                        body: "\(targetCore.displayName) \(release.version)"
+                    )
+                    return
+                }
+                stagedURL = try await CoreUpdater.downloadAndStage(release, for: targetCore, proxyPorts: ports)
+            } catch {
+                Notifier.post(id: "coreUpdate", title: "Failed to Update Core", body: error.localizedDescription)
+                return
+            }
+
+            await enqueue {
+                let shouldRestart = self.activeCore == targetCore
+                    && (self.status == .running || self.status == .starting)
+                    && self.profileURL != nil
+                if self.activeCore == targetCore {
+                    await self.stop()
+                }
+                do {
+                    let backupURL = try CoreUpdater.installStaged(stagedURL, for: targetCore)
+                    if shouldRestart {
+                        let started = await self.start()
+                        if !started {
+                            CoreUpdater.restoreBackup(backupURL, for: targetCore)
+                            await self.start()
+                            Notifier.post(
+                                id: "coreUpdate",
+                                title: "Failed to Update Core",
+                                body: Self.lastLogError(for: targetCore) ?? String(localized: "The core exited unexpectedly")
+                            )
+                            return
+                        }
+                    }
+                    CoreUpdater.removeBackup(backupURL)
+                    Notifier.post(
+                        id: "coreUpdate",
+                        title: "Core Updated",
+                        body: "\(targetCore.displayName) \(release.version)"
+                    )
+                } catch {
+                    try? FileManager.default.removeItem(at: stagedURL)
+                    if shouldRestart {
+                        await self.start()
+                    }
+                    Notifier.post(id: "coreUpdate", title: "Failed to Update Core", body: error.localizedDescription)
+                }
+            }.value
+        }
     }
 
     /// 退出或重启应用前串行停止当前内核并恢复系统代理
@@ -434,6 +522,7 @@ final class CoreManager {
         await syncConfigs()
         await refreshProxies()
         await applySystemProxy(notifyOnFailure: false)
+        await syncSystemDNS(notifyOnFailure: false)
     }
 
     private func syncConfigs() async {
@@ -497,24 +586,14 @@ final class CoreManager {
         guard activeCore.needsDNSChangeReload else { return }
         let servers = dnsMonitor?.servers ?? []
         guard status == .running, !servers.isEmpty, servers != loadedDNSServers else { return }
+        // 自己接管或恢复 DNS 引起的变化不应重载内核
+        if servers == expectedDNSServers {
+            expectedDNSServers = nil
+            loadedDNSServers = servers
+            return
+        }
         NSLog("系统 DNS 变为 \(servers)，重载内核配置")
         await apply()
-    }
-
-    /// 监听物理网络公网 IPv6 状态变化；自动模式下防抖后重新渲染并应用配置
-    private func systemIPv6DidChange() {
-        ipv6ChangeTask?.cancel()
-        ipv6ChangeTask = Task {
-            // 切换网络或路由通告变更时会连续触发多次回调
-            try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled else { return }
-            let available = ipv6Monitor?.isAvailable ?? false
-            guard available != isSystemIPv6Available else { return }
-            isSystemIPv6Available = available
-            guard ipv6Mode == .auto, status == .running else { return }
-            NSLog("物理网络 IPv6 变为\(available ? "可用" : "不可用")，重新应用内核配置")
-            scheduleApply()
-        }
     }
 
     /// 读取内核端口，开启系统代理时指向内核
@@ -565,6 +644,44 @@ final class CoreManager {
         }
     }
 
+    /// TUN 开启、开关打开且内核未自行处理 DNS 时接管系统 DNS，否则恢复
+    private func syncSystemDNS(notifyOnFailure: Bool = true) async {
+        guard isSystemDNSEnabled, isTunEnabled, status == .running, !kernelResolvesDNS else {
+            await restoreSystemDNS(notifyOnFailure: notifyOnFailure)
+            return
+        }
+        guard let service = SystemProxy.activeServiceName else { return }
+        // 服务不变时不再重复读写，避免定时同步反复修改系统设置
+        guard appliedSystemDNS?.service != service else { return }
+
+        do {
+            let applied = try await SystemDNS.enable()
+            appliedSystemDNS = applied
+            // 自己写入会触发 SystemDNSMonitor，先记下期望值避免重载内核
+            expectedDNSServers = applied.changed ? applied.servers : nil
+            loadedDNSServers = applied.servers
+        } catch {
+            NSLog("设置系统 DNS 失败：\(error)")
+            guard notifyOnFailure else { return }
+            Notifier.post(id: "systemDNS", title: "Failed to Set System DNS", body: error.localizedDescription)
+        }
+    }
+
+    /// 恢复接管前的 DNS；用户手动改过时不会覆盖
+    private func restoreSystemDNS(notifyOnFailure: Bool = true) async {
+        guard appliedSystemDNS != nil || SystemDNS.hasBackup else { return }
+        appliedSystemDNS = nil
+        do {
+            let restored = try await SystemDNS.disable()
+            expectedDNSServers = restored?.isEmpty == false ? restored : nil
+            loadedDNSServers = dnsMonitor?.servers ?? []
+        } catch {
+            NSLog("恢复系统 DNS 失败：\(error)")
+            guard notifyOnFailure else { return }
+            Notifier.post(id: "systemDNS", title: "Failed to Restore System DNS", body: error.localizedDescription)
+        }
+    }
+
     /// 支持热重载的内核（mihomo）在运行中热重载，其余（sing-box）重启进程应用新配置
     private func apply() async {
         guard status == .running, let profileURL, activeCore.supportsHotReload else {
@@ -582,9 +699,11 @@ final class CoreManager {
                 proxyPorts = ports
             }
             runtimeConfig = rendered.payload
+            kernelResolvesDNS = rendered.kernelResolvesDNS
             await refreshProxies()
             // 配置可能更换了代理端口
             await syncProxySettings()
+            await syncSystemDNS()
         } catch {
             Notifier.post(id: "core", title: "Failed to Load Config", body: error.localizedDescription)
         }
@@ -615,9 +734,10 @@ final class CoreManager {
         }
     }
 
-    private func start() async {
+    @discardableResult
+    private func start() async -> Bool {
         await stop()
-        guard let profileURL else { return }
+        guard let profileURL else { return false }
 
         let targetCore = activeCore
         status = .starting
@@ -630,7 +750,6 @@ final class CoreManager {
             await Self.terminateLeftovers()
             // 内核文件被替换后权限会丢失，启动前重新确认
             await ensureTunPermission()
-            isSystemIPv6Available = ipv6Monitor?.isAvailable ?? false
             let rendered = try await Self.render(config, profileURL: profileURL)
             loadedDNSServers = dnsMonitor?.servers ?? []
             let process = try launch(payload: rendered.payload, coreType: targetCore)
@@ -641,22 +760,30 @@ final class CoreManager {
 
             let version = try await waitUntilReady(process, coreType: targetCore)
             status = .running
+            if targetCore == .singBox {
+                try? await controller.patchConfigs(["mode": mode.rawValue])
+            }
             runtimeConfig = rendered.payload
+            kernelResolvesDNS = rendered.kernelResolvesDNS
             await refreshProxies()
             await syncProxySettings()
+            await syncSystemDNS()
 
             let label = version.lowercased().hasPrefix(targetCore.displayName.lowercased())
                 ? version
                 : "\(targetCore.displayName) \(version)"
             Notifier.post(id: "core", title: "Core Started", body: String(localized: "\(label), \(mode.title) mode"))
+            return true
         } catch {
             await stop()
             status = .failed
             Notifier.post(id: "core", title: "Failed to Start Core", body: error.localizedDescription)
+            return false
         }
     }
 
     private func stop() async {
+        await restoreSystemDNS()
         await restoreSystemProxy()
         guard let process else { return }
         // 先移除引用，使退出回调忽略这次主动停止
@@ -737,7 +864,10 @@ final class CoreManager {
         guard let process, process.processIdentifier == pid, status == .running else { return }
         self.process = nil
         status = .failed
-        enqueue { await self.restoreSystemProxy() }
+        enqueue {
+            await self.restoreSystemDNS()
+            await self.restoreSystemProxy()
+        }
         Notifier.post(id: "core", title: "Core Exited", body: Self.lastLogError(for: coreType) ?? String(localized: "Exit code \(code)"))
     }
 

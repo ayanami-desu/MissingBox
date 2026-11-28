@@ -170,28 +170,13 @@ nonisolated enum SystemProxy {
 
     @discardableResult
     private static func run(_ arguments: [String]) throws -> String {
-        let process = Process()
-        process.executableURL = URL(filePath: "/usr/sbin/networksetup")
-        process.arguments = arguments
-        let output = Pipe()
-        let errors = Pipe()
-        process.standardOutput = output
-        process.standardError = errors
-
         do {
-            try process.run()
+            return try Networksetup.run(arguments)
+        } catch NetworksetupError.commandFailed(let message) {
+            throw SystemProxyError.commandFailed(message)
         } catch {
             throw SystemProxyError.commandFailed(error.localizedDescription)
         }
-
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        let errorData = errors.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let message = String(decoding: errorData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            throw SystemProxyError.commandFailed(message)
-        }
-        return String(decoding: data, as: UTF8.self)
     }
 
     private static func storedBackup() -> Backup? {

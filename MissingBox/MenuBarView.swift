@@ -55,19 +55,6 @@ struct MenuLevelView: View {
         return core.activeCore.displayName
     }
 
-    private var ipv6Summary: String {
-        switch core.ipv6Mode {
-        case .auto:
-            core.isSystemIPv6Available
-                ? String(localized: "Auto (On)")
-                : String(localized: "Auto (Off)")
-        case .enabled:
-            IPv6Mode.enabled.title
-        case .disabled:
-            IPv6Mode.disabled.title
-        }
-    }
-
     private var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
     }
@@ -75,7 +62,6 @@ struct MenuLevelView: View {
     private var panelWidth: CGFloat {
         switch route {
         case nil: 276
-        case .ipv6: 200
         case .proxyGroups: 248
         case .proxyGroup: 260
         case .profiles: 256
@@ -90,8 +76,6 @@ struct MenuLevelView: View {
             switch route {
             case nil:
                 rootMenu
-            case .ipv6:
-                ipv6Menu
             case .proxyGroups:
                 proxyGroupsMenu
             case .proxyGroup(let groupName):
@@ -159,13 +143,19 @@ struct MenuLevelView: View {
                 onHoverEnter: { coordinator.hoverPlainRow(atLevel: level) }
             )
 
-            MenuSubmenuRow(
+            MenuToggleRow(
+                title: "Take Over System DNS",
+                systemImage: "server.rack",
+                isOn: Binding(get: { core.isSystemDNSEnabled }, set: { core.setSystemDNSEnabled($0) }),
+                onHoverEnter: { coordinator.hoverPlainRow(atLevel: level) }
+            )
+            .disabled(core.status != .running || core.kernelResolvesDNS)
+
+            MenuToggleRow(
                 title: "IPv6",
                 systemImage: "network",
-                value: ipv6Summary,
-                isActive: coordinator.isRouteActive(.ipv6, atParentLevel: level),
-                onHoverOpen: { coordinator.hoverSubmenu(.ipv6, fromLevel: level, rowScreenRect: $0) },
-                onClickOpen: { coordinator.openSubmenu(.ipv6, fromLevel: level, rowScreenRect: $0) }
+                isOn: Binding(get: { core.isIPv6Enabled }, set: { core.setIPv6Enabled($0) }),
+                onHoverEnter: { coordinator.hoverPlainRow(atLevel: level) }
             )
 
             MenuSubmenuRow(
@@ -236,16 +226,6 @@ struct MenuLevelView: View {
             }
 
             MenuActionRow(
-                title: core.isUpdatingPanel ? "Downloading Dashboard…" : "Update Dashboard",
-                systemImage: "arrow.down.circle",
-                isLoading: core.isUpdatingPanel,
-                onHoverEnter: { coordinator.hoverPlainRow(atLevel: level) }
-            ) {
-                core.updatePanel()
-            }
-            .disabled(core.status != .running || core.isUpdatingPanel)
-
-            MenuActionRow(
                 title: "Open Log…",
                 systemImage: "terminal",
                 onHoverEnter: { coordinator.hoverPlainRow(atLevel: level) }
@@ -255,38 +235,14 @@ struct MenuLevelView: View {
 
             MenuDivider()
 
-            // 设置
+            // 更多
             MenuSubmenuRow(
-                title: "Settings",
+                title: "More",
                 systemImage: "gearshape",
                 isActive: coordinator.isRouteActive(.settings, atParentLevel: level),
                 onHoverOpen: { coordinator.hoverSubmenu(.settings, fromLevel: level, rowScreenRect: $0) },
                 onClickOpen: { coordinator.openSubmenu(.settings, fromLevel: level, rowScreenRect: $0) }
             )
-
-            MenuDivider()
-
-            // 重启应用
-            MenuActionRow(
-                title: "Restart App",
-                systemImage: "arrow.clockwise",
-                onHoverEnter: { coordinator.hoverPlainRow(atLevel: level) }
-            ) {
-                coordinator.closeAll()
-                AppDelegate.relaunch(stopping: core)
-            }
-
-            // 退出
-            MenuActionRow(
-                title: "Quit MissingBox",
-                systemImage: "rectangle.portrait.and.arrow.right",
-                trailingText: "⌘Q",
-                isTrailingSubtle: true,
-                onHoverEnter: { coordinator.hoverPlainRow(atLevel: level) }
-            ) {
-                coordinator.closeAll()
-                NSApplication.shared.terminate(nil)
-            }
         }
     }
 
@@ -320,38 +276,10 @@ struct MenuLevelView: View {
                 }
             }
 
-            Spacer(minLength: 4)
-
-            MenuIconButton(
-                systemImage: "arrow.clockwise",
-                help: "Restart Core"
-            ) {
-                core.restart()
-            }
-            .disabled(profileStore.selected == nil)
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
-    }
-
-    // MARK: - 二级：IPv6 模式
-
-    private var ipv6Menu: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(IPv6Mode.allCases) { option in
-                MenuSelectionRow(
-                    verbatimTitle: option.title,
-                    isSelected: core.ipv6Mode == option,
-                    trailingText: option == .auto
-                        ? (core.isSystemIPv6Available ? String(localized: "IPv6 Available") : String(localized: "IPv6 Unavailable"))
-                        : nil,
-                    trailingColor: option == .auto && core.isSystemIPv6Available ? .green : .secondary
-                ) {
-                    core.setIPv6Mode(option)
-                    coordinator.closeLevel(level)
-                }
-            }
-        }
     }
 
     // MARK: - 二级：策略组列表
@@ -603,12 +531,21 @@ struct MenuLevelView: View {
             )
 
             MenuActionRow(
+                title: core.isUpdatingCore ? "Updating Core…" : "Update Core",
+                systemImage: "arrow.down.circle",
+                isLoading: core.isUpdatingCore
+            ) {
+                core.updateCore(currentVersion: coreVersion.version(for: core.activeCore))
+            }
+            .disabled(core.isUpdatingCore)
+
+            MenuActionRow(
                 title: "Restart Core",
                 systemImage: "arrow.clockwise"
             ) {
                 core.restart()
             }
-            .disabled(profileStore.selected == nil)
+            .disabled(profileStore.selected == nil || core.isUpdatingCore)
 
             MenuActionRow(
                 title: "Open Core Folder",
@@ -620,7 +557,7 @@ struct MenuLevelView: View {
         }
     }
 
-    // MARK: - 二级：设置
+    // MARK: - 二级：更多
 
     private var settingsMenu: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -630,11 +567,40 @@ struct MenuLevelView: View {
                 isOn: Binding(get: { launchAtLogin.isEnabled }, set: { launchAtLogin.setEnabled($0) })
             )
 
+            MenuActionRow(
+                title: core.isUpdatingPanel ? "Downloading Dashboard…" : "Update Dashboard",
+                systemImage: "arrow.down.circle",
+                isLoading: core.isUpdatingPanel
+            ) {
+                core.updatePanel()
+            }
+            .disabled(core.status != .running || core.isUpdatingPanel)
+
             MenuInfoRow(
                 title: "App Version",
                 systemImage: "info.circle",
                 value: appVersion
             )
+
+            MenuDivider()
+
+            MenuActionRow(
+                title: "Restart MissingBox",
+                systemImage: "arrow.clockwise"
+            ) {
+                coordinator.closeAll()
+                AppDelegate.relaunch(stopping: core)
+            }
+
+            MenuActionRow(
+                title: "Quit MissingBox",
+                systemImage: "rectangle.portrait.and.arrow.right",
+                trailingText: "⌘Q",
+                isTrailingSubtle: true
+            ) {
+                coordinator.closeAll()
+                NSApplication.shared.terminate(nil)
+            }
         }
         .onAppear {
             launchAtLogin.refresh()

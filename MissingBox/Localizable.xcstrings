@@ -21,16 +21,6 @@
         }
       }
     },
-    "%@: %@" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$@：%2$@"
-          }
-        }
-      }
-    },
     "A profile named “%@” already exists" : {
       "localizations" : {
         "zh-Hans" : {
@@ -151,62 +141,12 @@
         }
       }
     },
-    "Auto" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自动"
-          }
-        }
-      }
-    },
-    "Auto (Off)" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自动（已关闭）"
-          }
-        }
-      }
-    },
-    "Auto (On)" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自动（已开启）"
-          }
-        }
-      }
-    },
     "Auto Update" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "自动更新"
-          }
-        }
-      }
-    },
-    "Auto Update: %@" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自动更新：%@"
-          }
-        }
-      }
-    },
-    "Back" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "返回"
           }
         }
       }
@@ -341,6 +281,26 @@
         }
       }
     },
+    "Core Up to Date" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "内核已是最新"
+          }
+        }
+      }
+    },
+    "Core Updated" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "内核已更新"
+          }
+        }
+      }
+    },
     "Core Version" : {
       "localizations" : {
         "zh-Hans" : {
@@ -361,32 +321,12 @@
         }
       }
     },
-    "Core not found. Place mihomo in the core folder." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "未找到内核，请将 mihomo 放入内核目录"
-          }
-        }
-      }
-    },
     "Core permissions are still incorrect after authorization" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "授权后内核权限仍不正确"
-          }
-        }
-      }
-    },
-    "Core: %@" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "内核%@"
           }
         }
       }
@@ -477,6 +417,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在下载…"
+          }
+        }
+      }
+    },
+    "Downloaded core failed verification" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下载的内核校验失败"
           }
         }
       }
@@ -587,12 +537,32 @@
         }
       }
     },
+    "Failed to Restore System DNS" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "恢复系统 DNS 失败"
+          }
+        }
+      }
+    },
     "Failed to Restore System Proxy" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "恢复系统代理失败"
+          }
+        }
+      }
+    },
+    "Failed to Set System DNS" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置系统 DNS 失败"
           }
         }
       }
@@ -643,6 +613,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "解除锁定失败"
+          }
+        }
+      }
+    },
+    "Failed to Update Core" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新内核失败"
           }
         }
       }
@@ -713,26 +693,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "IPv6"
-          }
-        }
-      }
-    },
-    "IPv6 Available" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "IPv6 可用"
-          }
-        }
-      }
-    },
-    "IPv6 Unavailable" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "IPv6 不可用"
           }
         }
       }
@@ -817,16 +777,6 @@
         }
       }
     },
-    "Kernel: %@" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "内核：%@"
-          }
-        }
-      }
-    },
     "Last Updated" : {
       "localizations" : {
         "zh-Hans" : {
@@ -873,16 +823,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "模式"
-          }
-        }
-      }
-    },
-    "Mode: %@" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "模式：%@"
           }
         }
       }
@@ -1187,16 +1127,6 @@
         }
       }
     },
-    "Profile: %@" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "配置：%@"
-          }
-        }
-      }
-    },
     "Proxy" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1277,22 +1207,22 @@
         }
       }
     },
-    "Restart App" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "重启应用"
-          }
-        }
-      }
-    },
     "Restart Core" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "重启内核"
+          }
+        }
+      }
+    },
+    "Restart MissingBox" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重启 MissingBox"
           }
         }
       }
@@ -1343,16 +1273,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保存"
-          }
-        }
-      }
-    },
-    "Settings" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "设置"
           }
         }
       }
@@ -1497,6 +1417,16 @@
         }
       }
     },
+    "Take Over System DNS" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接管系统 DNS"
+          }
+        }
+      }
+    },
     "The config passed to the core can be viewed once the core is running." : {
       "localizations" : {
         "zh-Hans" : {
@@ -1637,6 +1567,26 @@
         }
       }
     },
+    "Unable to change the DNS settings" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法修改 DNS 设置"
+          }
+        }
+      }
+    },
+    "Unable to change the network settings" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法修改网络设置"
+          }
+        }
+      }
+    },
     "Unable to change the system proxy settings" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1647,12 +1597,32 @@
         }
       }
     },
+    "Unable to extract the core archive" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法解压内核压缩包"
+          }
+        }
+      }
+    },
     "Unable to extract the dashboard archive" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法解压面板压缩包"
+          }
+        }
+      }
+    },
+    "Unable to find a compatible core release" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未找到兼容的内核版本"
           }
         }
       }
@@ -1737,6 +1707,16 @@
         }
       }
     },
+    "Update Core" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新内核"
+          }
+        }
+      }
+    },
     "Update Dashboard" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1753,6 +1733,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "更新配置"
+          }
+        }
+      }
+    },
+    "Updating Core…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在更新内核…"
           }
         }
       }
@@ -1853,16 +1843,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Wi-Fi“%@”"
-          }
-        }
-      }
-    },
-    "mihomo %@, %@ mode" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "mihomo %1$@，%2$@模式"
           }
         }
       }

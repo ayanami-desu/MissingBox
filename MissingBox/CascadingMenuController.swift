@@ -9,7 +9,6 @@ import SwiftUI
 
 /// 级联子菜单的路由标识
 enum MenuRoute: Hashable {
-    case ipv6
     case proxyGroups
     case proxyGroup(String)
     case profiles
