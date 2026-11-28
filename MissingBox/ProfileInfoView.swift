@@ -10,7 +10,7 @@ import SwiftUI
 struct ProfileInfoView: View {
     static let windowID = "profile-info"
 
-    let name: String
+    let target: ProfileWindowTarget
 
     @Environment(ProfileStore.self) private var profileStore
     @Environment(\.dismiss) private var dismiss
@@ -21,13 +21,16 @@ struct ProfileInfoView: View {
     @State private var isDeleteConfirmationPresented = false
     @State private var errorMessage: String?
 
-    init(name: String) {
-        self.name = name
-        _newName = State(initialValue: name)
+    private var name: String { target.name }
+
+    init(target: ProfileWindowTarget) {
+        self.target = target
+        _newName = State(initialValue: target.name)
     }
 
     private var profile: Profile? {
-        profileStore.profiles.first { $0.name == name && !$0.isDeleted }
+        guard profileStore.coreType == target.coreType else { return nil }
+        return profileStore.profiles.first { $0.name == name && !$0.isDeleted }
     }
 
     private var trimmedName: String {
@@ -159,7 +162,9 @@ struct ProfileInfoView: View {
             if let url = changedURL {
                 try await profileStore.update(profile, from: url)
             }
-            if trimmedName != name, let current = profileStore.profiles.first(where: { $0.name == name && !$0.isDeleted }) {
+            if trimmedName != name,
+               profileStore.coreType == target.coreType,
+               let current = profileStore.profiles.first(where: { $0.name == name && !$0.isDeleted }) {
                 try profileStore.rename(current, to: trimmedName)
             }
             dismiss()
@@ -169,6 +174,7 @@ struct ProfileInfoView: View {
     }
 
     private func delete(_ profile: Profile) {
+        guard profileStore.coreType == target.coreType else { return }
         do {
             try profileStore.delete(profile)
             dismiss()
@@ -179,6 +185,6 @@ struct ProfileInfoView: View {
 }
 
 #Preview {
-    ProfileInfoView(name: "Example")
+    ProfileInfoView(target: ProfileWindowTarget(coreType: .mihomo, name: "Example"))
         .environment(ProfileStore())
 }

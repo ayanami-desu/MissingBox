@@ -9,7 +9,7 @@ import SwiftUI
 struct ProfileEditorView: View {
     static let windowID = "profile-editor"
 
-    let name: String
+    let target: ProfileWindowTarget
 
     @Environment(CoreManager.self) private var core
     @Environment(ProfileStore.self) private var profileStore
@@ -17,8 +17,11 @@ struct ProfileEditorView: View {
     @State private var text: String?
     @State private var loadError: String?
 
+    private var name: String { target.name }
+
     private var profile: Profile? {
-        profileStore.profiles.first { $0.name == name && !$0.isDeleted }
+        guard profileStore.coreType == target.coreType else { return nil }
+        return profileStore.profiles.first { $0.name == name && !$0.isDeleted }
     }
 
     private var isReadOnly: Bool {
@@ -64,7 +67,7 @@ struct ProfileEditorView: View {
     private func save() async throws {
         guard let profile, let text else { throw ProfileError.notFound(name) }
         try await profileStore.saveContent(text, of: profile)
-        if profileStore.selectedName == name {
+        if profileStore.coreType == target.coreType && profileStore.selectedName == name {
             core.reload()
         }
     }

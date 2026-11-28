@@ -6,6 +6,12 @@
 import AppKit
 import Observation
 
+/// 配置信息与编辑窗口的标识，绑定所属内核，避免切换内核后误操作另一内核的同名配置
+nonisolated struct ProfileWindowTarget: Hashable, Codable {
+    var coreType: CoreType
+    var name: String
+}
+
 enum ProfileDirectory {
     /// 各内核独立的配置目录：mihomo 为 Profiles/，sing-box 为 Profiles-sing-box/
     static func url(for coreType: CoreType) -> URL {
@@ -312,10 +318,15 @@ final class ProfileStore {
         }
     }
 
-    /// 名称即文件名：需合法且不与目录中已有配置重复（APFS 默认不区分大小写）；
+    /// 名称即文件名：需合法、不为保留名且不与目录中已有配置重复（APFS 默认不区分大小写）；
     /// 重命名时排除配置自身，允许只修改大小写
     func checkName(_ name: String, excluding current: String? = nil) throws {
-        guard !name.isEmpty, !name.hasPrefix("."), !name.contains("/"), !name.contains(":") else {
+        guard !name.isEmpty,
+              !name.hasPrefix("."),
+              !name.contains("/"),
+              !name.contains(":"),
+              name.caseInsensitiveCompare("profiles") != .orderedSame
+        else {
             throw ProfileError.invalidName
         }
         if let current, current.caseInsensitiveCompare(name) == .orderedSame { return }
@@ -355,11 +366,13 @@ final class ProfileStore {
     /// 扫描配置目录重建列表；选中的配置文件被删除时以“已删除”状态保留
     private func reload() {
         let dirURL = ProfileDirectory.url(for: coreType)
-        let files = (try? FileManager.default.contentsOfDirectory(
+        guard let files = try? FileManager.default.contentsOfDirectory(
             at: dirURL,
             includingPropertiesForKeys: nil,
             options: .skipsHiddenFiles
-        )) ?? []
+        ) else {
+            return
+        }
 
         // 排除同目录中存放订阅元数据的 profiles.json
         var profiles = files
@@ -426,11 +439,13 @@ final class ProfileStore {
 
     /// 自动更新失败只记录日志，下次检查时重试，避免断网时反复通知
     private func updateDueSubscriptions() async {
+        let targetCore = coreType
         let due = profiles.filter { profile in
             guard !profile.isDeleted, let next = profile.subscription?.nextUpdate else { return false }
             return next <= .now
         }
         for profile in due {
+            guard coreType == targetCore else { break }
             do {
                 try await update(profile)
             } catch {
@@ -469,9 +484,12 @@ final class ProfileStore {
             throw ProfileError.badStatus(http.statusCode)
         }
         let header = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "profile-update-interval")
-        guard let hours = header.flatMap({ Double($0.trimmingCharacters(in: .whitespaces)) }), hours > 0 else {
+        guard let hours = header.flatMap({ Double($0.trimmingCharacters(in: .whitespaces)) }),
+              hours.isFinite,
+              hours > 0
+        else {
             return (data, nil)
         }
-        return (data, max(1, Int(hours.rounded())))
+        return (data, max(1, Int(min(hours, 8760).rounded())))
     }
 }

@@ -71,10 +71,14 @@ nonisolated enum SystemProxy {
         guard httpPort != nil || socksPort != nil else { return }
         guard let service = activeServiceName else { throw SystemProxyError.noActiveService }
 
-        // 网络服务变了，先恢复旧服务，再按新服务重新保存
+        // 网络服务变了，先恢复旧服务；仅恢复成功后才清除备份，失败时保留以便后续重试
         if let previous = storedBackup(), previous.service != service {
-            try? restore(previous)
-            clearBackup()
+            do {
+                try restore(previous)
+                clearBackup()
+            } catch {
+                NSLog("恢复 \(previous.service) 的系统代理失败：\(error)")
+            }
         }
 
         if storedBackup() == nil {
@@ -122,8 +126,12 @@ nonisolated enum SystemProxy {
     /// 应用退出时同步恢复，异步任务可能来不及完成
     static func restoreIfNeeded() {
         guard let backup = storedBackup() else { return }
-        try? restore(backup)
-        clearBackup()
+        do {
+            try restore(backup)
+            clearBackup()
+        } catch {
+            NSLog("恢复 \(backup.service) 的系统代理失败：\(error)")
+        }
     }
 
     private static func restore(_ backup: Backup) throws {

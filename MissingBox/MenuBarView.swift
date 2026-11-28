@@ -384,7 +384,7 @@ struct MenuLevelView: View {
                 onHoverEnter: { coordinator.hoverPlainRow(atLevel: level) }
             ) {
                 guard let current = currentProfile else { return }
-                coordinator.openAppWindow(id: ProfileEditorView.windowID, value: current.name)
+                coordinator.openAppWindow(id: ProfileEditorView.windowID, value: ProfileWindowTarget(coreType: core.activeCore, name: current.name))
             }
             .disabled(currentProfile == nil)
 
@@ -394,7 +394,7 @@ struct MenuLevelView: View {
                 onHoverEnter: { coordinator.hoverPlainRow(atLevel: level) }
             ) {
                 guard let current = currentProfile else { return }
-                coordinator.openAppWindow(id: ProfileInfoView.windowID, value: current.name)
+                coordinator.openAppWindow(id: ProfileInfoView.windowID, value: ProfileWindowTarget(coreType: core.activeCore, name: current.name))
             }
             .disabled(currentProfile == nil)
 

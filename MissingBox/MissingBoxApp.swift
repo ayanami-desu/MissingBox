@@ -138,9 +138,9 @@ struct MissingBoxApp: App {
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
 
-        WindowGroup("Profile Info", id: ProfileInfoView.windowID, for: String.self) { $name in
-            if let name {
-                ProfileInfoView(name: name)
+        WindowGroup("Profile Info", id: ProfileInfoView.windowID, for: ProfileWindowTarget.self) { $target in
+            if let target {
+                ProfileInfoView(target: target)
                     .environment(profileStore)
             }
         }
@@ -148,9 +148,9 @@ struct MissingBoxApp: App {
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
 
-        WindowGroup("Edit Profile", id: ProfileEditorView.windowID, for: String.self) { $name in
-            if let name {
-                ProfileEditorView(name: name)
+        WindowGroup("Edit Profile", id: ProfileEditorView.windowID, for: ProfileWindowTarget.self) { $target in
+            if let target {
+                ProfileEditorView(target: target)
                     .environment(core)
                     .environment(profileStore)
             }

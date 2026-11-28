@@ -119,7 +119,7 @@ final class WiFiAutoSwitch {
         refresh(force: true, notify: false)
     }
 
-    /// 切换内核时载入该内核对应的 Wi-Fi 规则
+    /// 切换内核时载入该内核对应的 Wi-Fi 规则并立即应用当前网络配置
     func switchCore(to newCore: CoreType) {
         guard newCore != coreType else { return }
         isLoadingRules = true
@@ -127,6 +127,7 @@ final class WiFiAutoSwitch {
         coreType = newCore
         rules = Self.load([WiFiRule].self, forKey: Self.rulesKey(for: newCore)) ?? []
         otherNetworks = Self.load(WiFiAction.self, forKey: Self.otherNetworksKey(for: newCore)) ?? WiFiAction()
+        refresh(force: true, notify: false)
     }
 
     /// 配置重命名后更新对应内核规则中引用的配置名称
